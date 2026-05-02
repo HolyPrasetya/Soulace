@@ -6,98 +6,104 @@
 //
 
 import Foundation
+import Combine
+import FirebaseFirestore
 
 // MARK: - CreateSessionViewModel
 final class CreateSessionViewModel: ObservableObject {
-    @Published var selectedGroup: YogaGroup? = nil
-    @Published var selectedVideo: VideoContent? = nil
-    @Published var selectedDuration: Int = AppConstants.Session.defaultDuration
-    @Published var scheduledDate: Date = Date()
-    @Published var scheduledTime: Date = Date()
-    @Published var isLoading: Bool = false
-    @Published var errorMessage: String? = nil
-    @Published var createdSession: YogaSession? = nil
-    @Published var showVideoLibrary: Bool = false
+    @Published var selectedGroup:    YogaGroup?      = nil
+    @Published var selectedVideo:    VideoContent?   = nil
+    @Published var selectedDuration: Int             = AppConstants.Session.defaultDuration
+    @Published var scheduledDate:    Date            = Date()
+    @Published var scheduledTime:    Date            = Date()
+    @Published var isLoading:        Bool            = false
+    @Published var errorMessage:     String?         = nil
+    @Published var createdSession:   YogaSession?    = nil
+    @Published var showVideoLibrary: Bool            = false
 
-    let groups: [YogaGroup]
-    let durationOptions = AppConstants.Session.durationOptions
-    let videos: [VideoContent]
+    let groups:          [YogaGroup]
+    let durationOptions: [Int]       = AppConstants.Session.durationOptions
+    let videos:          [VideoContent]
 
     private let firestoreService    = FirestoreService.shared
     private let authService         = AuthService.shared
     private let calendarService     = CalendarService.shared
     private let notificationService = NotificationService.shared
+    private var cancellables        = Set<AnyCancellable>()
 
-    var canCreate: Bool {
-        selectedGroup != nil
-    }
+    var canCreate: Bool { selectedGroup != nil }
 
-    var scheduledDateTime: Date {
+    /// Combined date + time picker values → single Date → Firestore Timestamp
+    var scheduledTimestamp: Timestamp {
         let calendar = Calendar.current
-        let dateComponents = calendar.dateComponents([.year, .month, .day], from: scheduledDate)
-        let timeComponents = calendar.dateComponents([.hour, .minute], from: scheduledTime)
-        var combined = DateComponents()
-        combined.year   = dateComponents.year
-        combined.month  = dateComponents.month
-        combined.day    = dateComponents.day
-        combined.hour   = timeComponents.hour
-        combined.minute = timeComponents.minute
-        return calendar.date(from: combined) ?? Date()
+        let dateComps = calendar.dateComponents([.year, .month, .day], from: scheduledDate)
+        let timeComps = calendar.dateComponents([.hour, .minute],      from: scheduledTime)
+        var combined  = DateComponents()
+        combined.year   = dateComps.year
+        combined.month  = dateComps.month
+        combined.day    = dateComps.day
+        combined.hour   = timeComps.hour
+        combined.minute = timeComps.minute
+        let date = calendar.date(from: combined) ?? Date()
+        return Timestamp(date: date)
     }
 
     init(groups: [YogaGroup]) {
-        self.groups = groups
+        self.groups        = groups
         self.selectedGroup = groups.first
-        self.videos = FirestoreService.shared.getMockVideos()
+        self.videos        = FirestoreService.shared.getMockVideos()
     }
 
     // MARK: - Create Session
     @MainActor
     func createSession() async {
-        guard let group = selectedGroup,
+        guard let group  = selectedGroup,
               let groupID = group.id,
-              let userID = authService.currentUser?.id else { return }
+              let userID  = authService.currentUser?.id else { return }
 
-        isLoading = true
+        isLoading    = true
         errorMessage = nil
 
         let session = YogaSession(
-            groupID: groupID,
-            groupName: group.name,
-            hostID: userID,
-            videoID: selectedVideo?.id,
-            scheduledAt: scheduledDateTime,
-            durationMinutes: selectedDuration
+            groupID:          groupID,
+            groupName:        group.name,
+            hostID:           userID,
+            videoID:          selectedVideo?.id,
+            scheduledAt:      scheduledTimestamp,
+            durationMinutes:  selectedDuration
         )
 
         do {
             let sessionID = try await firestoreService.createSession(session)
-            var created = session
+
+            var created   = session
+            // Rebuild with ID
             created = YogaSession(
-                id: sessionID,
-                groupID: groupID,
-                groupName: group.name,
-                hostID: userID,
-                videoID: selectedVideo?.id,
-                scheduledAt: scheduledDateTime,
-                durationMinutes: selectedDuration,
+                id:               sessionID,
+                groupID:          groupID,
+                groupName:        group.name,
+                hostID:           userID,
+                videoID:          selectedVideo?.id,
+                scheduledAt:      scheduledTimestamp,
+                durationMinutes:  selectedDuration,
                 agoraChannelName: session.agoraChannelName
             )
 
-            // Add to calendar
-            let eventID = await calendarService.addSession(created, groupName: group.name)
-            if let eventID {
-                try await firestoreService.updateSessionStatus(id: sessionID, status: .scheduled)
-                _ = eventID // store eventID if needed via update
-            }
+            // Add to native Calendar
+            _ = await calendarService.addSession(created, groupName: group.name)
 
-            // Schedule local notification
-            notificationService.scheduleSessionReminder(session: created, groupName: group.name)
+            // Schedule local notification reminder
+            notificationService.scheduleSessionReminder(
+                session:   created,
+                groupName: group.name
+            )
 
             createdSession = created
+
         } catch {
             errorMessage = error.localizedDescription
         }
+
         isLoading = false
     }
 }
