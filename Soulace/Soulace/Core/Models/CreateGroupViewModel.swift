@@ -1,18 +1,18 @@
 //
-//  VideoCallView.swift
+//  CreateGroupViewModel.swift
 //  Soulace
 //
-//  Created by Ignasius Holy Prasetya on 29/04/26.
+//  Created by Ignasius Holy Prasetya on 02/05/26.
 //
 
 import SwiftUI
 
-struct VideoCallView: View {
+struct CreateGroupViewModel: View {
     var body: some View {
         Text(/*@START_MENU_TOKEN@*/"Hello, World!"/*@END_MENU_TOKEN@*/)
     }
 }
 
 #Preview {
-    VideoCallView()
+    CreateGroupViewModel()
 }
