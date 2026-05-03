@@ -5,18 +5,21 @@
 //  Created by Ignasius Holy Prasetya on 02/05/26.
 //
 
+
 import SwiftUI
 import Combine
 
 // MARK: - Call Controls Bar
+// Bug 3: Tambah parameter onParticipants agar tombol "Participants" berfungsi
 struct CallControlsView: View {
-    let isMuted:     Bool
-    let isCameraOff: Bool
-    let onMic:       () -> Void
-    let onCamera:    () -> Void
-    let onSwitch:    () -> Void
-    let onVideo:     () -> Void
-    let onEnd:       () -> Void
+    let isMuted:        Bool
+    let isCameraOff:    Bool
+    let onMic:          () -> Void
+    let onCamera:       () -> Void
+    let onSwitch:       () -> Void
+    let onVideo:        () -> Void
+    let onParticipants: () -> Void   // ← Bug 3: callback baru
+    let onEnd:          () -> Void
 
     var body: some View {
         HStack(spacing: 0) {
@@ -24,25 +27,25 @@ struct CallControlsView: View {
 
             // Mic
             CallControlButton(
-                icon:    isMuted ? "mic.slash.fill" : "mic.fill",
-                label:   isMuted ? "Mic Off" : "Mic On",
-                tint:    isMuted ? .red : .white,
-                action:  onMic
+                icon:   isMuted ? "mic.slash.fill" : "mic.fill",
+                label:  isMuted ? "Mic Off" : "Mic On",
+                tint:   isMuted ? .red : .white,
+                action: onMic
             )
 
             Spacer()
 
             // Camera
             CallControlButton(
-                icon:    isCameraOff ? "video.slash.fill" : "video.fill",
-                label:   isCameraOff ? "Cam Off" : "Cam On",
-                tint:    isCameraOff ? .red : .white,
-                action:  onCamera
+                icon:   isCameraOff ? "video.slash.fill" : "video.fill",
+                label:  isCameraOff ? "Cam Off" : "Cam On",
+                tint:   isCameraOff ? .red : .white,
+                action: onCamera
             )
 
             Spacer()
 
-            // End call
+            // End call (merah di tengah)
             Button(action: onEnd) {
                 VStack(spacing: 5) {
                     ZStack {
@@ -63,22 +66,22 @@ struct CallControlsView: View {
 
             Spacer()
 
-            // Share Video
+            // Bug 3: Participants panel button (sebelumnya blank/salah)
             CallControlButton(
-                icon:   "play.rectangle.fill",
-                label:  "Participants",
+                icon:   "person.2.fill",
+                label:  "People",
                 tint:   Color.soulaceMint,
-                action: onVideo
+                action: onParticipants
             )
 
             Spacer()
 
-            // Switch Camera
+            // Share Video button
             CallControlButton(
-                icon:   "camera.rotate.fill",
-                label:  "More",
+                icon:   "play.rectangle.fill",
+                label:  "Video",
                 tint:   .white,
-                action: onSwitch
+                action: onVideo
             )
 
             Spacer()
@@ -134,7 +137,6 @@ struct AdmitDeclineView: View {
                 Spacer()
 
                 VStack(spacing: 20) {
-                    // Handle
                     RoundedRectangle(cornerRadius: 3)
                         .fill(Color.gray.opacity(0.4))
                         .frame(width: 40, height: 5)
@@ -143,7 +145,6 @@ struct AdmitDeclineView: View {
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundColor(Color.soulaceDark)
 
-                    // User info
                     VStack(spacing: 10) {
                         ZStack {
                             Circle()
@@ -153,13 +154,11 @@ struct AdmitDeclineView: View {
                                 .font(.system(size: 22, weight: .bold))
                                 .foregroundColor(Color.soulaceAccent)
                         }
-
                         Text(entry.userName)
                             .font(.system(size: 17, weight: .semibold))
                             .foregroundColor(Color.soulaceDark)
                     }
 
-                    // Buttons
                     HStack(spacing: 14) {
                         Button(action: onDecline) {
                             Text("Decline")
@@ -219,7 +218,7 @@ struct AdmitDeclineView: View {
     }
 }
 
-// MARK: - Waiting Room View (for non-host who is waiting)
+// MARK: - Waiting Room View (non-host waiting)
 struct WaitingRoomView: View {
     let session: YogaSession
     let entryID: String
@@ -243,7 +242,6 @@ struct WaitingRoomView: View {
             VStack(spacing: 28) {
                 Spacer()
 
-                // Animated waiting indicator
                 ZStack {
                     ForEach(0..<3, id: \.self) { i in
                         Circle()
@@ -258,7 +256,6 @@ struct WaitingRoomView: View {
                                 value: vm.pulseScale
                             )
                     }
-
                     ZStack {
                         Circle()
                             .fill(Color.soulaceAccent.opacity(0.12))
@@ -289,10 +286,7 @@ struct WaitingRoomView: View {
                             .multilineTextAlignment(.center)
                     }
                     .padding(20)
-                    .background(
-                        RoundedRectangle(cornerRadius: 16)
-                            .fill(Color.white.opacity(0.6))
-                    )
+                    .background(RoundedRectangle(cornerRadius: 16).fill(Color.white.opacity(0.6)))
                 }
 
                 Spacer()
@@ -305,8 +299,8 @@ struct WaitingRoomView: View {
 
 // MARK: - WaitingRoomViewModel
 final class WaitingRoomViewModel: ObservableObject {
-    @Published var isAdmitted: Bool  = false
-    @Published var isDeclined: Bool  = false
+    @Published var isAdmitted: Bool    = false
+    @Published var isDeclined: Bool    = false
     @Published var pulseScale: CGFloat = 1.0
 
     private let entryID: String

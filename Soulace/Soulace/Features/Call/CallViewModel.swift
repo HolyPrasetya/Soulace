@@ -5,6 +5,11 @@
 //  Created by Ignasius Holy Prasetya on 02/05/26.
 //
 
+//
+//  CallViewModel.swift
+//  Soulace
+//
+
 import Foundation
 import Combine
 import AVFoundation
@@ -18,14 +23,16 @@ final class CallViewModel: ObservableObject {
     @Published var isJoined: Bool                   = false
     @Published var isMuted: Bool                    = false
     @Published var isCameraOff: Bool                = false
-    @Published var sessionElapsed: Int              = 0       // seconds
-    @Published var sessionRemaining: Int            = 0       // seconds
+    @Published var sessionElapsed: Int              = 0
+    @Published var sessionRemaining: Int            = 0
     @Published var showVideoPlayer: Bool            = false
+    @Published var showParticipantsPanel: Bool      = false   // ← Bug 3: panel participants
     @Published var showAdmitSheet: Bool             = false
     @Published var pendingEntry: WaitingEntry?      = nil
     @Published var errorMessage: String?            = nil
     @Published var isSessionEnded: Bool             = false
-    @Published var tooManyParticipants: Bool        = false
+    @Published var isTimerRunning: Bool             = false   // ← Bug 4: timer state
+    @Published var navigateHome: Bool               = false   // ← Bug 5: back to home
 
     // MARK: Session info
     let session: YogaSession
@@ -33,30 +40,28 @@ final class CallViewModel: ObservableObject {
     var selectedVideo: VideoContent?
 
     // MARK: Private
-    private let agoraService    = AgoraService.shared
+    private let agoraService     = AgoraService.shared
     private let firestoreService = FirestoreService.shared
-    private var cancellables    = Set<AnyCancellable>()
+    private var cancellables     = Set<AnyCancellable>()
     private var sessionTimer: Timer?
     private var joinTimes: [String: Date] = [:]
 
     // MARK: Computed
-    var isHost: Bool { session.hostID == currentUser.id }
+    var isHost: Bool        { session.hostID == currentUser.id }
     var durationSeconds: Int { session.durationMinutes * 60 }
-
-    var elapsedFormatted: String { formatTime(sessionElapsed) }
+    var elapsedFormatted: String   { formatTime(sessionElapsed) }
     var remainingFormatted: String { formatTime(sessionRemaining) }
-
-    var participantCount: Int { participants.count + 1 } // +1 for local user
+    var participantCount: Int      { participants.count + 1 }
 
     init(session: YogaSession, currentUser: SoulaceUser, video: VideoContent? = nil) {
-        self.session      = session
-        self.currentUser  = currentUser
+        self.session       = session
+        self.currentUser   = currentUser
         self.selectedVideo = video
         self.sessionRemaining = session.durationMinutes * 60
         observeAgora()
     }
 
-    // MARK: - Observe Agora Service
+    // MARK: - Observe Agora
     private func observeAgora() {
         agoraService.$remoteParticipants
             .receive(on: DispatchQueue.main)
@@ -70,11 +75,13 @@ final class CallViewModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .assign(to: &$isCameraOff)
 
+        // Bug 4: Tidak hanya rely pada isJoined — timer bisa manual start juga
         agoraService.$isJoined
             .receive(on: DispatchQueue.main)
             .sink { [weak self] joined in
                 self?.isJoined = joined
-                if joined { self?.startSessionTimer() }
+                // Auto-start timer ketika berhasil join Agora channel
+                if joined { self?.startTimer() }
             }
             .store(in: &cancellables)
     }
@@ -86,7 +93,6 @@ final class CallViewModel: ObservableObject {
         agoraService.joinChannel(session.agoraChannelName, userID: uid)
         joinTimes[userID] = Date()
 
-        // Update Firestore
         Task {
             try? await firestoreService.addParticipantToSession(
                 sessionID: session.id ?? "",
@@ -98,15 +104,47 @@ final class CallViewModel: ObservableObject {
             )
         }
 
-        // Observe waiting room if host
         if isHost { observeWaitingRoom() }
     }
 
-    // MARK: - Leave / End Call
-    func leaveCall() {
-        sessionTimer?.invalidate()
-        agoraService.leaveChannel()
+    // MARK: - Bug 4: Manual start timer (jika Agora lambat join atau testing tanpa Agora)
+    func startTimer() {
+        guard !isTimerRunning else { return }
+        isTimerRunning = true
+        sessionTimer   = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            DispatchQueue.main.async {
+                self.sessionElapsed   += 1
+                self.sessionRemaining  = max(0, self.durationSeconds - self.sessionElapsed)
+                if self.sessionRemaining == 0 {
+                    self.sessionTimer?.invalidate()
+                    self.isTimerRunning = false
+                    self.endSession()
+                }
+            }
+        }
+    }
 
+    func pauseTimer() {
+        sessionTimer?.invalidate()
+        sessionTimer   = nil
+        isTimerRunning = false
+    }
+
+    func toggleTimer() {
+        if isTimerRunning { pauseTimer() } else { startTimer() }
+    }
+
+    // MARK: - Bug 5: Back = go home WITHOUT ending call
+    func goHome() {
+        // Dismiss view saja, tidak leave channel
+        DispatchQueue.main.async { self.navigateHome = true }
+    }
+
+    // MARK: - End Call (hanya dari tombol End merah)
+    func leaveCall() {
+        pauseTimer()
+        agoraService.leaveChannel()
         Task {
             if isHost {
                 try? await firestoreService.updateSessionStatus(
@@ -115,30 +153,27 @@ final class CallViewModel: ObservableObject {
                 )
             }
         }
-
         DispatchQueue.main.async { self.isSessionEnded = true }
     }
 
-    // MARK: - Toggle Controls
+    // MARK: - Session ended by timer
+    private func endSession() {
+        agoraService.leaveChannel()
+        Task {
+            if isHost {
+                try? await firestoreService.updateSessionStatus(
+                    id: session.id ?? "",
+                    status: .completed
+                )
+            }
+        }
+        DispatchQueue.main.async { self.isSessionEnded = true }
+    }
+
+    // MARK: - Controls
     func toggleMic()    { agoraService.toggleMic() }
     func toggleCamera() { agoraService.toggleCamera() }
     func switchCamera() { agoraService.switchCamera() }
-
-    // MARK: - Session Timer
-    private func startSessionTimer() {
-        sessionTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-            guard let self else { return }
-            DispatchQueue.main.async {
-                self.sessionElapsed   += 1
-                self.sessionRemaining  = max(0, self.durationSeconds - self.sessionElapsed)
-
-                if self.sessionRemaining == 0 {
-                    self.sessionTimer?.invalidate()
-                    self.leaveCall()
-                }
-            }
-        }
-    }
 
     private func formatTime(_ seconds: Int) -> String {
         let h = seconds / 3600
@@ -167,10 +202,7 @@ final class CallViewModel: ObservableObject {
 
     func admitParticipant(_ entry: WaitingEntry) {
         Task {
-            try? await firestoreService.updateWaitingStatus(
-                entryID: entry.id ?? "",
-                status: .admitted
-            )
+            try? await firestoreService.updateWaitingStatus(entryID: entry.id ?? "", status: .admitted)
             DispatchQueue.main.async {
                 self.waitingEntries.removeAll { $0.id == entry.id }
                 self.pendingEntry   = self.waitingEntries.first
@@ -181,10 +213,7 @@ final class CallViewModel: ObservableObject {
 
     func declineParticipant(_ entry: WaitingEntry) {
         Task {
-            try? await firestoreService.updateWaitingStatus(
-                entryID: entry.id ?? "",
-                status: .declined
-            )
+            try? await firestoreService.updateWaitingStatus(entryID: entry.id ?? "", status: .declined)
             DispatchQueue.main.async {
                 self.waitingEntries.removeAll { $0.id == entry.id }
                 self.pendingEntry   = self.waitingEntries.first
@@ -193,11 +222,10 @@ final class CallViewModel: ObservableObject {
         }
     }
 
-    // MARK: - Session Summary
     func buildSummary() -> SessionSummary {
         SessionSummary(
             session: session,
-            participants: [],        // fetch from Firestore in summary view
+            participants: [],
             participantDurations: [:],
             longestParticipant: nil,
             totalMinutes: sessionElapsed / 60

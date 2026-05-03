@@ -10,16 +10,18 @@ import Combine
 
 // MARK: - HomeViewModel
 final class HomeViewModel: ObservableObject {
-    @Published var groups: [YogaGroup] = []
+    @Published var groups: [YogaGroup]           = []
     @Published var upcomingSessions: [YogaSession] = []
-    @Published var isLoading: Bool = false
-    @Published var errorMessage: String? = nil
-    @Published var showCreateGroup: Bool = false
-    @Published var showJoinSession: Bool = false
+    @Published var isLoading: Bool               = false
+    @Published var errorMessage: String?         = nil
+    @Published var showCreateGroup: Bool         = false
+    @Published var showJoinSession: Bool         = false
 
     private let firestoreService = FirestoreService.shared
     private let authService      = AuthService.shared
     private var cancellables     = Set<AnyCancellable>()
+    // Simpan session cancellables terpisah supaya bisa di-reset saat groups berubah
+    private var sessionCancellables = Set<AnyCancellable>()
 
     var currentUser: SoulaceUser? { authService.currentUser }
 
@@ -34,7 +36,7 @@ final class HomeViewModel: ObservableObject {
 
     init() { fetchGroups() }
 
-    // MARK: - Fetch Groups
+    // MARK: - Fetch Groups (realtime listener)
     func fetchGroups() {
         guard let userID = authService.currentUser?.id else { return }
         isLoading = true
@@ -49,32 +51,39 @@ final class HomeViewModel: ObservableObject {
                     }
                 },
                 receiveValue: { [weak self] groups in
-                    self?.groups = groups
-                    self?.isLoading = false
-                    self?.fetchUpcomingSessions(for: groups)
+                    guard let self else { return }
+                    self.groups    = groups
+                    self.isLoading = false
+                    // Reset dan re-subscribe session listeners setiap kali groups berubah
+                    self.subscribeToAllSessions(for: groups)
                 }
             )
             .store(in: &cancellables)
     }
 
-    // MARK: - Fetch Sessions across all groups
-    private func fetchUpcomingSessions(for groups: [YogaGroup]) {
+    // MARK: - Subscribe realtime sessions untuk semua groups
+    private func subscribeToAllSessions(for groups: [YogaGroup]) {
+        // Cancel semua session listener lama
+        sessionCancellables.removeAll()
         upcomingSessions = []
+
         for group in groups {
             guard let groupID = group.id else { continue }
+
             firestoreService.getUpcomingSessions(groupID: groupID)
                 .receive(on: DispatchQueue.main)
                 .sink(
                     receiveCompletion: { _ in },
                     receiveValue: { [weak self] sessions in
                         guard let self else { return }
-                        let existing = self.upcomingSessions.map { $0.id }
-                        let newSessions = sessions.filter { !existing.contains($0.id) }
-                        self.upcomingSessions.append(contentsOf: newSessions)
+                        // Hapus session lama dari group ini, replace dengan yang baru
+                        self.upcomingSessions.removeAll { $0.groupID == groupID }
+                        self.upcomingSessions.append(contentsOf: sessions)
+                        // Sort by date
                         self.upcomingSessions.sort { $0.scheduledDate < $1.scheduledDate }
                     }
                 )
-                .store(in: &cancellables)
+                .store(in: &sessionCancellables)
         }
     }
 

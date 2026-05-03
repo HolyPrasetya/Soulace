@@ -11,6 +11,7 @@ import AgoraRtcKit
 struct CallView: View {
     @StateObject private var vm: CallViewModel
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject var appState: AppState
 
     init(session: YogaSession, currentUser: SoulaceUser, video: VideoContent? = nil) {
         _vm = StateObject(wrappedValue: CallViewModel(
@@ -29,7 +30,7 @@ struct CallView: View {
                 participantGrid
                     .padding(.horizontal, 3)
                     .padding(.top, 3)
-                sessionInfoBar
+                sessionInfoBar      // Bug 4: includes play/pause timer button
                 CallControlsView(
                     isMuted:     vm.isMuted,
                     isCameraOff: vm.isCameraOff,
@@ -37,8 +38,14 @@ struct CallView: View {
                     onCamera:    { vm.toggleCamera() },
                     onSwitch:    { vm.switchCamera() },
                     onVideo:     { vm.showVideoPlayer.toggle() },
+                    onParticipants: { vm.showParticipantsPanel.toggle() },  // Bug 3
                     onEnd:       { vm.leaveCall() }
                 )
+            }
+
+            // Bug 3: Participants panel overlay
+            if vm.showParticipantsPanel {
+                participantsPanel
             }
 
             // Admit/Decline overlay
@@ -49,22 +56,44 @@ struct CallView: View {
             }
         }
         .navigationBarHidden(true)
-        .onAppear { vm.joinCall() }
-        .onDisappear { AgoraService.shared.leaveChannel() }
+        .onAppear {
+            vm.joinCall()
+            // Bug 4: Jika Agora belum join (testing/simulasi), start timer manual setelah delay
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                if !vm.isTimerRunning { vm.startTimer() }
+            }
+        }
+        .onDisappear {
+            // Bug 5: Hanya cleanup jika memang session ended, bukan saat back
+            if vm.isSessionEnded {
+                AgoraService.shared.leaveChannel()
+            }
+        }
+        // Bug 5: Back to home = dismiss saja tanpa end call
+        .onChange(of: vm.navigateHome) { goHome in
+            if goHome { dismiss() }
+        }
         .fullScreenCover(isPresented: $vm.isSessionEnded) {
             SessionSummaryView(summary: vm.buildSummary())
         }
         .sheet(isPresented: $vm.showVideoPlayer) {
             if let video = vm.selectedVideo {
                 VideoPlayerView(video: video)
+            } else {
+                // Jika belum ada video terpilih, tampilkan video library untuk pilih
+                VideoLibraryView { video in
+                    vm.selectedVideo = video
+                    vm.showVideoPlayer = false
+                }
             }
         }
     }
 
     // MARK: - Top Bar
+    // Bug 5: Back button sekarang pakai vm.goHome() bukan vm.leaveCall()
     private var callTopBar: some View {
         HStack {
-            Button(action: { vm.leaveCall() }) {
+            Button(action: { vm.goHome() }) {            // ← Bug 5 fix
                 ZStack {
                     Circle()
                         .fill(Color.white.opacity(0.1))
@@ -83,9 +112,11 @@ struct CallView: View {
                     .foregroundColor(.white)
                 HStack(spacing: 5) {
                     Circle()
-                        .fill(Color.green)
+                        .fill(vm.isTimerRunning ? Color.green : Color.orange)
                         .frame(width: 6, height: 6)
-                    Text("Live · \(vm.participantCount) people")
+                    Text(vm.isTimerRunning
+                         ? "Live · \(vm.participantCount) people"
+                         : "Paused · \(vm.participantCount) people")
                         .font(.system(size: 11))
                         .foregroundColor(.white.opacity(0.6))
                 }
@@ -94,7 +125,7 @@ struct CallView: View {
             Spacer()
 
             // Waiting room badge
-            Button(action: {}) {
+            Button(action: { vm.showParticipantsPanel.toggle() }) {
                 ZStack(alignment: .topTrailing) {
                     Image(systemName: "person.badge.plus")
                         .font(.system(size: 18))
@@ -120,7 +151,6 @@ struct CallView: View {
         let columns = [GridItem(.flexible(), spacing: 3), GridItem(.flexible(), spacing: 3)]
 
         return LazyVGrid(columns: columns, spacing: 3) {
-            // Local user tile
             LocalVideoTile(
                 user: vm.currentUser,
                 isMuted: vm.isMuted,
@@ -130,13 +160,11 @@ struct CallView: View {
             )
             .aspectRatio(0.75, contentMode: .fit)
 
-            // Remote participants (max 7)
             ForEach(allParticipants.prefix(AppConstants.Agora.maxParticipants - 1)) { participant in
                 RemoteVideoTile(participant: participant)
                     .aspectRatio(0.75, contentMode: .fit)
             }
 
-            // If too many — swipe indicator
             if vm.participantCount > 4 {
                 TooManyParticipantsIndicator(count: vm.participantCount - 4)
                     .aspectRatio(0.75, contentMode: .fit)
@@ -145,18 +173,36 @@ struct CallView: View {
     }
 
     // MARK: - Session Info Bar
+    // Bug 4: Tambah tombol play/pause timer
     private var sessionInfoBar: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
                 Text(vm.elapsedFormatted)
                     .font(.system(size: 18, weight: .bold, design: .monospaced))
                     .foregroundColor(.white)
-                Text("\(vm.session.durationMinutes - (vm.sessionElapsed / 60)) min remaining")
+                Text("\(max(0, vm.session.durationMinutes - (vm.sessionElapsed / 60))) min remaining")
                     .font(.system(size: 11))
                     .foregroundColor(.white.opacity(0.5))
             }
 
             Spacer()
+
+            // Bug 4: Play/Pause timer button
+            Button(action: { vm.toggleTimer() }) {
+                HStack(spacing: 5) {
+                    Image(systemName: vm.isTimerRunning ? "pause.fill" : "play.fill")
+                        .font(.system(size: 11, weight: .bold))
+                    Text(vm.isTimerRunning ? "Pause" : "Start")
+                        .font(.system(size: 11, weight: .semibold))
+                }
+                .foregroundColor(vm.isTimerRunning ? Color.soulaceMint : .white)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(
+                    Capsule()
+                        .fill(Color.white.opacity(0.12))
+                )
+            }
 
             // Timer ring
             ZStack {
@@ -169,7 +215,7 @@ struct CallView: View {
                     : 0
 
                 Circle()
-                    .trim(from: 0, to: progress)
+                    .trim(from: 0, to: min(progress, 1.0))
                     .stroke(Color.soulaceMint, style: StrokeStyle(lineWidth: 3, lineCap: .round))
                     .frame(width: 36, height: 36)
                     .rotationEffect(.degrees(-90))
@@ -182,9 +228,150 @@ struct CallView: View {
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
     }
+
+    // MARK: - Bug 3: Participants Panel
+    private var participantsPanel: some View {
+        ZStack {
+            Color.black.opacity(0.4)
+                .ignoresSafeArea()
+                .onTapGesture { vm.showParticipantsPanel = false }
+
+            VStack {
+                Spacer()
+
+                VStack(spacing: 0) {
+                    // Handle
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(Color.gray.opacity(0.4))
+                        .frame(width: 40, height: 5)
+                        .padding(.top, 12)
+                        .padding(.bottom, 16)
+
+                    HStack {
+                        Text("Participants")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundColor(Color.soulaceDark)
+                        Spacer()
+                        Text("\(vm.participantCount)")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundColor(Color.soulaceAccent)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                            .background(Capsule().fill(Color.soulaceAccent.opacity(0.1)))
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 12)
+
+                    Divider()
+
+                    ScrollView(showsIndicators: false) {
+                        VStack(spacing: 0) {
+                            // Local user
+                            ParticipantRow(
+                                initials: vm.currentUser.initials,
+                                name:     "\(vm.currentUser.fullName) (You)",
+                                isMuted:  vm.isMuted,
+                                isHost:   vm.isHost
+                            )
+                            Divider().padding(.leading, 56)
+
+                            // Remote participants
+                            ForEach(vm.participants) { p in
+                                ParticipantRow(
+                                    initials: p.initials,
+                                    name:     p.name,
+                                    isMuted:  p.isMuted,
+                                    isHost:   p.isHost
+                                )
+                                if p.id != vm.participants.last?.id {
+                                    Divider().padding(.leading, 56)
+                                }
+                            }
+
+                            if vm.participants.isEmpty {
+                                VStack(spacing: 8) {
+                                    Image(systemName: "person.2")
+                                        .font(.system(size: 28))
+                                        .foregroundColor(Color.soulaceAccent.opacity(0.3))
+                                    Text("No other participants yet")
+                                        .font(.system(size: 14))
+                                        .foregroundColor(Color.soulaceDark.opacity(0.4))
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 28)
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 300)
+
+                    Spacer().frame(height: 34)
+                }
+                .background(
+                    RoundedRectangle(cornerRadius: 28, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [Color.soulacePeach, Color.soulaceSage.opacity(0.95)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .shadow(color: Color.black.opacity(0.2), radius: 24, x: 0, y: -8)
+                )
+                .padding(.horizontal, 10)
+                .padding(.bottom, 0)
+            }
+        }
+        .transition(.opacity.combined(with: .move(edge: .bottom)))
+        .animation(.spring(response: 0.4, dampingFraction: 0.82), value: vm.showParticipantsPanel)
+    }
 }
 
-// MARK: - Local Video Tile (UIViewRepresentable for Agora)
+// MARK: - Participant Row (for panel)
+struct ParticipantRow: View {
+    let initials: String
+    let name: String
+    let isMuted: Bool
+    let isHost: Bool
+
+    var body: some View {
+        HStack(spacing: 12) {
+            ZStack {
+                Circle()
+                    .fill(Color.soulaceMint.opacity(0.5))
+                    .frame(width: 40, height: 40)
+                Text(initials)
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundColor(Color.soulaceDark)
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 5) {
+                    Text(name)
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(Color.soulaceDark)
+                    if isHost {
+                        Text("Host")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(Color.soulaceAccent)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Capsule().fill(Color.soulaceAccent.opacity(0.12)))
+                    }
+                }
+            }
+
+            Spacer()
+
+            Image(systemName: isMuted ? "mic.slash.fill" : "mic.fill")
+                .font(.system(size: 14))
+                .foregroundColor(isMuted ? .red.opacity(0.7) : Color.soulaceAccent.opacity(0.6))
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+    }
+}
+
+// MARK: - Local Video Tile
 struct LocalVideoTile: View {
     let user: SoulaceUser
     let isMuted: Bool
@@ -204,7 +391,6 @@ struct LocalVideoTile: View {
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
 
-            // Overlays
             VStack {
                 if showShareButton {
                     HStack {
@@ -316,7 +502,7 @@ struct TooManyParticipantsIndicator: View {
                 Text("+\(count)")
                     .font(.system(size: 24, weight: .bold))
                     .foregroundColor(.white.opacity(0.7))
-                Text("Swipe to see more")
+                Text("More participants")
                     .font(.system(size: 10))
                     .foregroundColor(.white.opacity(0.4))
             }

@@ -12,37 +12,28 @@ import Combine
 // MARK: - FirestoreService
 final class FirestoreService {
     static let shared = FirestoreService()
-    private let db    = Firestore.firestore()
+    let db = Firestore.firestore()
 
     private init() {
-        // Enable Firestore offline persistence
         let settings = FirestoreSettings()
-        settings.isPersistenceEnabled = true
+        settings.cacheSettings = PersistentCacheSettings()
         db.settings = settings
     }
 
-    // MARK: ─────────────────────────────────────────────
-    // MARK: USERS
-    // MARK: ─────────────────────────────────────────────
+    // MARK: ── USERS ──
 
     func getUser(id: String) async throws -> SoulaceUser? {
         let doc = try await db
             .collection(AppConstants.Collections.users)
             .document(id)
             .getDocument()
-
-        // Document doesn't exist yet — return nil (not an error)
         guard doc.exists else { return nil }
-
         return try doc.data(as: SoulaceUser.self)
     }
 
     func createUser(_ user: SoulaceUser) async throws {
-        guard let id = user.id else {
-            throw FirestoreError.missingID
-        }
-        // Use setData with merge:false to create fresh document
-        try await db
+        guard let id = user.id else { throw FirestoreError.missingID }
+        try db
             .collection(AppConstants.Collections.users)
             .document(id)
             .setData(from: user)
@@ -50,7 +41,7 @@ final class FirestoreService {
 
     func updateUser(_ user: SoulaceUser) async throws {
         guard let id = user.id else { return }
-        try await db
+        try db
             .collection(AppConstants.Collections.users)
             .document(id)
             .setData(from: user, merge: true)
@@ -63,15 +54,20 @@ final class FirestoreService {
             .whereField("fullName", isLessThanOrEqualTo: query + "\u{f8ff}")
             .limit(to: 20)
             .getDocuments()
-
-        return snapshot.documents.compactMap { doc in
-            try? doc.data(as: SoulaceUser.self)
-        }
+        return snapshot.documents.compactMap { try? $0.data(as: SoulaceUser.self) }
     }
 
-    // MARK: ─────────────────────────────────────────────
-    // MARK: GROUPS
-    // MARK: ─────────────────────────────────────────────
+    // Cari users berdasarkan email (untuk contact sync)
+    func getUsersByEmails(_ emails: [String]) async throws -> [SoulaceUser] {
+        guard !emails.isEmpty else { return [] }
+        let snapshot = try await db
+            .collection(AppConstants.Collections.users)
+            .whereField("email", in: emails)
+            .getDocuments()
+        return snapshot.documents.compactMap { try? $0.data(as: SoulaceUser.self) }
+    }
+
+    // MARK: ── GROUPS ──
 
     func createGroup(_ group: YogaGroup) async throws -> String {
         let ref = try db
@@ -116,29 +112,24 @@ final class FirestoreService {
     }
 
     func addUserToGroup(groupID: String, userID: String) async throws {
-        // Add userID to group's memberIDs
         try await db
             .collection(AppConstants.Collections.groups)
             .document(groupID)
             .updateData(["memberIDs": FieldValue.arrayUnion([userID])])
 
-        // Add groupID to user's groupIDs
         try await db
             .collection(AppConstants.Collections.users)
             .document(userID)
             .updateData(["groupIDs": FieldValue.arrayUnion([groupID])])
     }
 
-    // MARK: ─────────────────────────────────────────────
-    // MARK: SESSIONS
-    // MARK: ─────────────────────────────────────────────
+    // MARK: ── SESSIONS ──
 
     func createSession(_ session: YogaSession) async throws -> String {
         let ref = try db
             .collection(AppConstants.Collections.sessions)
             .addDocument(from: session)
 
-        // Link session to group
         try await db
             .collection(AppConstants.Collections.groups)
             .document(session.groupID)
@@ -156,21 +147,33 @@ final class FirestoreService {
         return try? doc.data(as: YogaSession.self)
     }
 
+    // FIX: Query hanya by groupID — filter status & date di client side
+    // Ini menghindari kebutuhan composite index yang mungkin belum dibuat
     func getUpcomingSessions(groupID: String) -> AnyPublisher<[YogaSession], Error> {
         let subject = PassthroughSubject<[YogaSession], Error>()
+
         db.collection(AppConstants.Collections.sessions)
             .whereField("groupID", isEqualTo: groupID)
-            .whereField("status",  isEqualTo: "scheduled")
-            .order(by: "scheduledAt")
             .addSnapshotListener { snapshot, error in
                 if let error {
                     subject.send(completion: .failure(error))
                     return
                 }
+
+                let now = Date()
                 let sessions = (snapshot?.documents ?? [])
                     .compactMap { try? $0.data(as: YogaSession.self) }
+                    // Filter di client: hanya scheduled atau live, dan belum lewat
+                    .filter { session in
+                        let isActiveStatus = session.status == .scheduled || session.status == .live
+                        let isNotExpired   = session.endDate > now
+                        return isActiveStatus && isNotExpired
+                    }
+                    .sorted { $0.scheduledDate < $1.scheduledDate }
+
                 subject.send(sessions)
             }
+
         return subject.eraseToAnyPublisher()
     }
 
@@ -188,9 +191,7 @@ final class FirestoreService {
             .updateData(["participantIDs": FieldValue.arrayUnion([userID])])
     }
 
-    // MARK: ─────────────────────────────────────────────
-    // MARK: WAITING ROOM
-    // MARK: ─────────────────────────────────────────────
+    // MARK: ── WAITING ROOM ──
 
     func addToWaitingRoom(_ entry: WaitingEntry) async throws -> String {
         let ref = try db
@@ -203,7 +204,7 @@ final class FirestoreService {
         let subject = PassthroughSubject<[WaitingEntry], Error>()
         db.collection(AppConstants.Collections.waitingRoom)
             .whereField("sessionID", isEqualTo: sessionID)
-            .whereField("status",    isEqualTo: "pending")
+            .whereField("status", isEqualTo: "pending")
             .addSnapshotListener { snapshot, error in
                 if let error {
                     subject.send(completion: .failure(error))
@@ -238,24 +239,19 @@ final class FirestoreService {
             .updateData(["status": status.rawValue])
     }
 
-    // MARK: ─────────────────────────────────────────────
-    // MARK: VIDEO LIBRARY
-    // MARK: ─────────────────────────────────────────────
+    // MARK: ── VIDEO LIBRARY ──
 
     func getVideos(category: VideoContent.VideoCategory? = nil) async throws -> [VideoContent] {
         var query: Query = db
             .collection(AppConstants.Collections.videos)
             .order(by: "uploadedAt", descending: true)
-
         if let category {
             query = query.whereField("category", isEqualTo: category.rawValue)
         }
-
         let snapshot = try await query.getDocuments()
         return snapshot.documents.compactMap { try? $0.data(as: VideoContent.self) }
     }
 
-    /// Mock videos for development — replace when real content is in Firebase Storage
     func getMockVideos() -> [VideoContent] {
         let now = Timestamp(date: Date())
         return [
@@ -306,8 +302,8 @@ enum FirestoreError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .missingID:       return "Document ID is missing"
-        case .decodingFailed:  return "Failed to decode document"
+        case .missingID:      return "Document ID is missing"
+        case .decodingFailed: return "Failed to decode document"
         }
     }
 }

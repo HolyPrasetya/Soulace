@@ -41,15 +41,6 @@ struct CreateGroupView: View {
                         .foregroundColor(Color.soulaceAccent)
                 }
             }
-            .alert("Allow Contacts Sync?",
-                   isPresented: $vm.showContactsPermission) {
-                Button("Don't Allow", role: .cancel) {}
-                Button("Allow") {
-                    // ContactsSync — implement with CNContactStore if needed
-                }
-            } message: {
-                Text("This app may request your contacts to save it as the list of your friends group. Do you wish to allow this?")
-            }
         }
     }
 
@@ -81,12 +72,18 @@ struct CreateGroupView: View {
                     Image(systemName: "magnifyingglass")
                         .foregroundColor(Color.soulaceDark.opacity(0.4))
                         .font(.system(size: 15))
-                    TextField("Search Friends", text: $vm.searchQuery)
+                    TextField("Search Friends by name", text: $vm.searchQuery)
                         .font(.system(size: 15))
                         .foregroundColor(Color.soulaceDark)
                         .onChange(of: vm.searchQuery) { _ in
                             Task { await vm.searchUsers() }
                         }
+                    if !vm.searchQuery.isEmpty {
+                        Button(action: { vm.searchQuery = "" }) {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(Color.soulaceDark.opacity(0.3))
+                        }
+                    }
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 12)
@@ -110,9 +107,41 @@ struct CreateGroupView: View {
                     }
                 }
 
+                // Syncing indicator
+                if vm.isSyncingContacts {
+                    HStack(spacing: 10) {
+                        ProgressView().tint(Color.soulaceAccent)
+                        Text("Syncing contacts...")
+                            .font(.system(size: 13))
+                            .foregroundColor(Color.soulaceDark.opacity(0.5))
+                    }
+                    .padding(.vertical, 8)
+                }
+
                 // Search Results
                 if !vm.searchResults.isEmpty {
-                    VStack(spacing: 0) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        // Header saat hasil dari contacts
+                        if vm.searchQuery.isEmpty && !vm.isSyncingContacts {
+                            HStack {
+                                Image(systemName: "person.crop.circle.badge.checkmark")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(Color.soulaceAccent)
+                                Text("From your contacts on Soulace")
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundColor(Color.soulaceAccent)
+                                Spacer()
+                                Button(action: { vm.searchResults = [] }) {
+                                    Image(systemName: "xmark")
+                                        .font(.system(size: 11))
+                                        .foregroundColor(Color.soulaceDark.opacity(0.3))
+                                }
+                            }
+                            .padding(.horizontal, 14)
+                            .padding(.top, 12)
+                            .padding(.bottom, 4)
+                        }
+
                         ForEach(vm.searchResults) { user in
                             MemberSearchRow(
                                 user: user,
@@ -130,13 +159,14 @@ struct CreateGroupView: View {
                             .fill(Color.white)
                             .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: 3)
                     )
-                } else if vm.searchQuery.isBlank {
-                    // Sync contacts prompt
+
+                } else if vm.searchQuery.isEmpty && !vm.isSyncingContacts {
+                    // Sync contacts button
                     Button(action: { vm.requestContactsSync() }) {
                         HStack(spacing: 8) {
                             Image(systemName: "person.crop.circle.badge.plus")
                                 .font(.system(size: 15))
-                            Text("Sync Contact")
+                            Text("Sync Contacts")
                                 .font(.system(size: 14, weight: .medium))
                         }
                         .foregroundColor(Color.soulaceAccent)
@@ -148,7 +178,7 @@ struct CreateGroupView: View {
                         )
                     }
 
-                    Text("Looks like you don't have the friend list")
+                    Text("Find friends already on Soulace\nfrom your phone contacts")
                         .font(.system(size: 13))
                         .foregroundColor(Color.soulaceDark.opacity(0.4))
                         .multilineTextAlignment(.center)
@@ -158,15 +188,23 @@ struct CreateGroupView: View {
 
             // Error
             if let error = vm.errorMessage {
-                Text(error)
-                    .font(.system(size: 13))
-                    .foregroundColor(.red)
-                    .multilineTextAlignment(.center)
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.circle.fill")
+                        .foregroundColor(error.contains("denied") ? .orange : .red)
+                    Text(error)
+                        .font(.system(size: 13))
+                        .foregroundColor(error.contains("denied") ? .orange : .red)
+                        .multilineTextAlignment(.leading)
+                }
+                .padding(12)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill((error.contains("denied") ? Color.orange : Color.red).opacity(0.08))
+                )
             }
 
             Spacer().frame(height: 20)
 
-            // Create button
             SoulacePrimaryButton(
                 title: "Create Group",
                 isLoading: vm.isLoading,
@@ -220,7 +258,6 @@ struct MemberSearchRow: View {
     var body: some View {
         Button(action: onTap) {
             HStack(spacing: 12) {
-                // Avatar
                 ZStack {
                     Circle()
                         .fill(Color.soulaceMint)
@@ -230,13 +267,18 @@ struct MemberSearchRow: View {
                         .foregroundColor(Color.soulaceDark)
                 }
 
-                Text(user.fullName)
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundColor(Color.soulaceDark)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(user.fullName)
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundColor(Color.soulaceDark)
+                    Text(user.email)
+                        .font(.system(size: 11))
+                        .foregroundColor(Color.soulaceDark.opacity(0.4))
+                        .lineLimit(1)
+                }
 
                 Spacer()
 
-                // Checkmark
                 ZStack {
                     RoundedRectangle(cornerRadius: 6)
                         .fill(isSelected ? Color.soulaceAccent : Color.gray.opacity(0.15))
@@ -276,9 +318,7 @@ struct MemberChip: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
-        .background(
-            Capsule().fill(Color.soulaceAccent.opacity(0.1))
-        )
+        .background(Capsule().fill(Color.soulaceAccent.opacity(0.1)))
     }
 }
 
@@ -292,7 +332,6 @@ struct GroupCreatedSuccessView: View {
         VStack(spacing: 24) {
             Spacer().frame(height: 40)
 
-            // Success icon
             ZStack {
                 Circle()
                     .fill(Color.soulaceAccent.opacity(0.12))
@@ -308,11 +347,9 @@ struct GroupCreatedSuccessView: View {
                 Text("Successfully Created")
                     .font(.system(size: 14))
                     .foregroundColor(Color.soulaceDark.opacity(0.5))
-
                 Text(group.name)
                     .font(.custom("Georgia-Bold", size: 26))
                     .foregroundColor(Color.soulaceDark)
-
                 Text("\(group.memberCount) Members")
                     .font(.system(size: 14))
                     .foregroundColor(Color.soulaceDark.opacity(0.55))
@@ -320,7 +357,6 @@ struct GroupCreatedSuccessView: View {
             .opacity(appeared ? 1 : 0)
             .offset(y: appeared ? 0 : 16)
 
-            // Invite code
             VStack(spacing: 6) {
                 Text("Invite Code")
                     .font(.system(size: 12))
@@ -340,10 +376,7 @@ struct GroupCreatedSuccessView: View {
 
             Spacer()
 
-            SoulacePrimaryButton(title: "Schedule a Session") {
-                onDone()
-            }
-
+            SoulacePrimaryButton(title: "Schedule a Session") { onDone() }
             Button("Maybe Later") { onDone() }
                 .font(.system(size: 14))
                 .foregroundColor(Color.soulaceDark.opacity(0.4))

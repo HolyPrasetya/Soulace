@@ -10,30 +10,32 @@ import AgoraRtcKit
 import Combine
 
 // MARK: - AgoraService
-/// Manages Agora RTC video call — join, leave, participant events
 final class AgoraService: NSObject, ObservableObject {
     static let shared = AgoraService()
 
-    @Published var localUserID: UInt = 0
+    @Published var localUserID: UInt            = 0
     @Published var remoteParticipants: [CallParticipant] = []
-    @Published var isJoined: Bool = false
-    @Published var isMuted: Bool = false
-    @Published var isCameraOff: Bool = false
-    @Published var error: String? = nil
+    @Published var isJoined: Bool               = false
+    @Published var isMuted: Bool                = false
+    @Published var isCameraOff: Bool            = false
+    @Published var error: String?               = nil
 
     private var agoraKit: AgoraRtcEngineKit?
     private var currentChannel: String?
 
     override init() {
         super.init()
-        setupEngine()
+        // ⚠️ TIDAK setup engine di sini — tunggu sampai benar-benar join call
+        // Ini fix SIGKILL: Agora engine berat, jangan init saat app launch
     }
 
-    // MARK: - Setup Engine
-    private func setupEngine() {
+    // MARK: - Setup Engine (lazy — hanya dipanggil saat joinChannel)
+    private func setupEngineIfNeeded() {
+        guard agoraKit == nil else { return }
+
         let config = AgoraRtcEngineConfig()
-        config.appId = AppConstants.Agora.appID
-        config.channelProfile = .liveBroadcasting
+        config.appId           = AppConstants.Agora.appID
+        config.channelProfile  = .liveBroadcasting
         agoraKit = AgoraRtcEngineKit.sharedEngine(with: config, delegate: self)
         agoraKit?.setClientRole(.broadcaster)
         agoraKit?.enableVideo()
@@ -42,22 +44,23 @@ final class AgoraService: NSObject, ObservableObject {
 
     // MARK: - Join Channel
     func joinChannel(_ channelName: String, userID: UInt = 0) {
+        // Setup engine sekarang, bukan saat launch
+        setupEngineIfNeeded()
+
         currentChannel = channelName
 
         let options = AgoraRtcChannelMediaOptions()
-        options.clientRoleType = .broadcaster
-        options.channelProfile  = .liveBroadcasting
-        options.publishCameraTrack = true
+        options.clientRoleType         = .broadcaster
+        options.channelProfile         = .liveBroadcasting
+        options.publishCameraTrack     = true
         options.publishMicrophoneTrack = true
-        options.autoSubscribeAudio = true
-        options.autoSubscribeVideo = true
+        options.autoSubscribeAudio     = true
+        options.autoSubscribeVideo     = true
 
-        // Token generation: for MVP use nil (test mode)
-        // In production, fetch token from your backend
         let result = agoraKit?.joinChannel(
-            byToken: nil,
-            channelId: channelName,
-            uid: userID,
+            byToken:      nil,
+            channelId:    channelName,
+            uid:          userID,
             mediaOptions: options
         )
 
@@ -72,9 +75,9 @@ final class AgoraService: NSObject, ObservableObject {
     func leaveChannel() {
         agoraKit?.leaveChannel { _ in }
         DispatchQueue.main.async {
-            self.isJoined = false
+            self.isJoined           = false
             self.remoteParticipants = []
-            self.currentChannel = nil
+            self.currentChannel     = nil
         }
     }
 
@@ -97,9 +100,10 @@ final class AgoraService: NSObject, ObservableObject {
 
     // MARK: - Setup Local Video
     func setupLocalVideo(view: UIView) {
-        let canvas = AgoraRtcVideoCanvas()
-        canvas.uid = 0
-        canvas.view = view
+        setupEngineIfNeeded()
+        let canvas        = AgoraRtcVideoCanvas()
+        canvas.uid        = 0
+        canvas.view       = view
         canvas.renderMode = .hidden
         agoraKit?.setupLocalVideo(canvas)
         agoraKit?.startPreview()
@@ -107,9 +111,9 @@ final class AgoraService: NSObject, ObservableObject {
 
     // MARK: - Setup Remote Video
     func setupRemoteVideo(uid: UInt, view: UIView) {
-        let canvas = AgoraRtcVideoCanvas()
-        canvas.uid = uid
-        canvas.view = view
+        let canvas        = AgoraRtcVideoCanvas()
+        canvas.uid        = uid
+        canvas.view       = view
         canvas.renderMode = .hidden
         agoraKit?.setupRemoteVideo(canvas)
     }
@@ -125,21 +129,18 @@ final class AgoraService: NSObject, ObservableObject {
 // MARK: - AgoraRtcEngineDelegate
 extension AgoraService: AgoraRtcEngineDelegate {
 
-    // Local user joined
-    func rtcEngine(_ engine: AgoraRtcEngineKit, didJoinChannel channel: String, withUid uid: UInt, elapsed: Int) {
+    func rtcEngine(_ engine: AgoraRtcEngineKit,
+                   didJoinChannel channel: String, withUid uid: UInt, elapsed: Int) {
         DispatchQueue.main.async {
             self.localUserID = uid
-            self.isJoined = true
+            self.isJoined    = true
         }
     }
 
-    // Remote user joined
     func rtcEngine(_ engine: AgoraRtcEngineKit, didJoinedOfUid uid: UInt, elapsed: Int) {
         let participant = CallParticipant(
-            id: "\(uid)",
-            agoraUID: uid,
-            name: "Participant",
-            initials: "P"
+            id: "\(uid)", agoraUID: uid,
+            name: "Participant", initials: "P"
         )
         DispatchQueue.main.async {
             if !self.remoteParticipants.contains(where: { $0.agoraUID == uid }) {
@@ -148,32 +149,29 @@ extension AgoraService: AgoraRtcEngineDelegate {
         }
     }
 
-    // Remote user left
-    func rtcEngine(_ engine: AgoraRtcEngineKit, didOfflineOfUid uid: UInt, reason: AgoraUserOfflineReason) {
+    func rtcEngine(_ engine: AgoraRtcEngineKit,
+                   didOfflineOfUid uid: UInt, reason: AgoraUserOfflineReason) {
         DispatchQueue.main.async {
             self.remoteParticipants.removeAll { $0.agoraUID == uid }
         }
     }
 
-    // Remote user muted audio
     func rtcEngine(_ engine: AgoraRtcEngineKit, didAudioMuted muted: Bool, byUid uid: UInt) {
         DispatchQueue.main.async {
-            if let index = self.remoteParticipants.firstIndex(where: { $0.agoraUID == uid }) {
-                self.remoteParticipants[index].isMuted = muted
+            if let i = self.remoteParticipants.firstIndex(where: { $0.agoraUID == uid }) {
+                self.remoteParticipants[i].isMuted = muted
             }
         }
     }
 
-    // Remote user muted video
     func rtcEngine(_ engine: AgoraRtcEngineKit, didVideoMuted muted: Bool, byUid uid: UInt) {
         DispatchQueue.main.async {
-            if let index = self.remoteParticipants.firstIndex(where: { $0.agoraUID == uid }) {
-                self.remoteParticipants[index].isCameraOff = muted
+            if let i = self.remoteParticipants.firstIndex(where: { $0.agoraUID == uid }) {
+                self.remoteParticipants[i].isCameraOff = muted
             }
         }
     }
 
-    // Connection error
     func rtcEngine(_ engine: AgoraRtcEngineKit, didOccurError errorCode: AgoraErrorCode) {
         DispatchQueue.main.async {
             self.error = "Agora error: \(errorCode.rawValue)"
