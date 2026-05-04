@@ -10,10 +10,8 @@ import Foundation
 import Combine
 import AVFoundation
 
-// MARK: - CallViewModel
 final class CallViewModel: ObservableObject {
 
-    // MARK: Published State
     @Published var participants: [CallParticipant]  = []
     @Published var waitingEntries: [WaitingEntry]   = []
     @Published var isJoined: Bool                   = false
@@ -22,38 +20,35 @@ final class CallViewModel: ObservableObject {
     @Published var sessionElapsed: Int              = 0
     @Published var sessionRemaining: Int            = 0
     @Published var showVideoPlayer: Bool            = false
-    @Published var isVideoPlaying: Bool             = true    // Bug 3: control embedded player
-    @Published var showParticipantsPanel: Bool      = false   // ← Bug 3: panel participants
+    @Published var isVideoPlaying: Bool             = true
+    @Published var showParticipantsPanel: Bool      = false
     @Published var showAdmitSheet: Bool             = false
     @Published var pendingEntry: WaitingEntry?      = nil
     @Published var errorMessage: String?            = nil
     @Published var isSessionEnded: Bool             = false
-    @Published var isTimerRunning: Bool             = false   // ← Bug 4: timer state
-    @Published var navigateHome: Bool               = false   // ← Bug 5: back to home
+    @Published var isTimerRunning: Bool             = false
+    @Published var navigateHome: Bool               = false
 
-    // MARK: Session info
     let session: YogaSession
     let currentUser: SoulaceUser
     var selectedVideo: VideoContent?
 
-    // MARK: Private
     private let agoraService     = AgoraService.shared
     private let firestoreService = FirestoreService.shared
     private var cancellables     = Set<AnyCancellable>()
     private var sessionTimer: Timer?
     private var joinTimes: [String: Date] = [:]
 
-    // MARK: Computed
-    var isHost: Bool        { session.hostID == currentUser.id }
+    var isHost: Bool         { session.hostID == currentUser.id }
     var durationSeconds: Int { session.durationMinutes * 60 }
     var elapsedFormatted: String   { formatTime(sessionElapsed) }
     var remainingFormatted: String { formatTime(sessionRemaining) }
     var participantCount: Int      { participants.count + 1 }
 
     init(session: YogaSession, currentUser: SoulaceUser, video: VideoContent? = nil) {
-        self.session       = session
-        self.currentUser   = currentUser
-        self.selectedVideo = video
+        self.session          = session
+        self.currentUser      = currentUser
+        self.selectedVideo    = video
         self.sessionRemaining = session.durationMinutes * 60
         observeAgora()
     }
@@ -72,12 +67,10 @@ final class CallViewModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .assign(to: &$isCameraOff)
 
-        // Bug 4: Tidak hanya rely pada isJoined — timer bisa manual start juga
         agoraService.$isJoined
             .receive(on: DispatchQueue.main)
             .sink { [weak self] joined in
                 self?.isJoined = joined
-                // Auto-start timer ketika berhasil join Agora channel
                 if joined { self?.startTimer() }
             }
             .store(in: &cancellables)
@@ -88,9 +81,9 @@ final class CallViewModel: ObservableObject {
         guard let userID = currentUser.id else { return }
         let uid = UInt(abs(userID.hashValue) % 100000)
 
-        // Wire name resolution callback BEFORE joining
+        // ✅ Callback dipasang sebelum join
         agoraService.onRemoteUserJoined = { [weak self] agoraUID in
-            self?.fetchParticipantName(agoraUID: agoraUID)
+            self?.resolveParticipantName(agoraUID: agoraUID)
         }
 
         agoraService.joinChannel(session.agoraChannelName, userID: uid)
@@ -98,43 +91,81 @@ final class CallViewModel: ObservableObject {
 
         Task {
             try? await firestoreService.addParticipantToSession(
-                sessionID: session.id ?? "",
-                userID: userID
+                sessionID: session.id ?? "", userID: userID
             )
             try? await firestoreService.updateSessionStatus(
-                id: session.id ?? "",
-                status: .live
+                id: session.id ?? "", status: .live
             )
         }
 
         if isHost { observeWaitingRoom() }
     }
 
-    // MARK: - Fetch participant name from Firestore by agoraUID
-    // Maps Agora UID → Firestore userID via participantIDs in session
-    private func fetchParticipantName(agoraUID: UInt) {
-        // Match agoraUID to Firestore userID: UID = abs(userID.hashValue) % 100000
-        let participantIDs = session.participantIDs
+    // MARK: - Resolve participant name
+    // ✅ Fix: fetch fresh session dari Firestore untuk dapat participantIDs terbaru
+    // Session object yang di-cache tidak reliable karena teman baru join SETELAH kita load session
+    private func resolveParticipantName(agoraUID: UInt) {
         Task {
-            for userID in participantIDs {
+            // Fetch fresh session dari Firestore untuk participantIDs terbaru
+            guard let sessionID = session.id,
+                  let freshSession = try? await firestoreService.getSession(id: sessionID) else {
+                // Fallback: coba semua user yang terdaftar di group
+                await resolveFromGroup(agoraUID: agoraUID)
+                return
+            }
+
+            // Coba match dari participantIDs session yang fresh
+            for userID in freshSession.participantIDs {
                 let expectedUID = UInt(abs(userID.hashValue) % 100000)
                 if expectedUID == agoraUID {
                     if let user = try? await firestoreService.getUser(id: userID) {
-                        await MainActor.run {
-                            if let i = self.participants.firstIndex(where: { $0.agoraUID == agoraUID }) {
-                                self.participants[i].name     = user.fullName
-                                self.participants[i].initials = user.initials
-                                print("👤 Resolved uid \(agoraUID) → \(user.fullName)")
-                            }
-                        }
+                        updateParticipantName(agoraUID: agoraUID, user: user)
+                        return
                     }
+                }
+            }
+
+            // Jika tidak ketemu di participantIDs, fallback ke group members
+            await resolveFromGroup(agoraUID: agoraUID)
+        }
+    }
+
+    // ✅ Fallback: match dari semua member di group
+    private func resolveFromGroup(agoraUID: UInt) async {
+        guard let group = try? await firestoreService.getGroup(id: session.groupID) else { return }
+
+        for userID in group.memberIDs { 
+            // Skip diri sendiri
+            if userID == currentUser.id { continue }
+
+            let expectedUID = UInt(abs(userID.hashValue) % 100000)
+            if expectedUID == agoraUID {
+                if let user = try? await firestoreService.getUser(id: userID) {
+                    updateParticipantName(agoraUID: agoraUID, user: user)
                     return
                 }
             }
         }
+
+        // Jika masih tidak ketemu, set nama default yang lebih baik dari "Loading..."
+        await MainActor.run {
+            if let i = self.participants.firstIndex(where: { $0.agoraUID == agoraUID }) {
+                self.participants[i].name     = "Participant"
+                self.participants[i].initials = "P"
+            }
+        }
     }
 
-    // MARK: - Bug 4: Manual start timer (jika Agora lambat join atau testing tanpa Agora)
+    @MainActor
+    private func updateParticipantName(agoraUID: UInt, user: SoulaceUser) {
+        if let i = participants.firstIndex(where: { $0.agoraUID == agoraUID }) {
+            participants[i].name     = user.fullName
+            participants[i].initials = user.initials
+            print("👤 Resolved uid \(agoraUID) → \(user.fullName)")
+        }
+    }
+
+    // MARK: - Timer
     func startTimer() {
         guard !isTimerRunning else { return }
         isTimerRunning = true
@@ -162,42 +193,35 @@ final class CallViewModel: ObservableObject {
         if isTimerRunning { pauseTimer() } else { startTimer() }
     }
 
-    // MARK: - Bug 5: Back = go home WITHOUT ending call
     func goHome() {
-        // Dismiss view saja, tidak leave channel
         DispatchQueue.main.async { self.navigateHome = true }
     }
 
-    // MARK: - End Call (hanya dari tombol End merah)
     func leaveCall() {
         pauseTimer()
         agoraService.leaveChannel()
         Task {
             if isHost {
                 try? await firestoreService.updateSessionStatus(
-                    id: session.id ?? "",
-                    status: .completed
+                    id: session.id ?? "", status: .completed
                 )
             }
         }
         DispatchQueue.main.async { self.isSessionEnded = true }
     }
 
-    // MARK: - Session ended by timer
     private func endSession() {
         agoraService.leaveChannel()
         Task {
             if isHost {
                 try? await firestoreService.updateSessionStatus(
-                    id: session.id ?? "",
-                    status: .completed
+                    id: session.id ?? "", status: .completed
                 )
             }
         }
         DispatchQueue.main.async { self.isSessionEnded = true }
     }
 
-    // MARK: - Controls
     func toggleMic()    { agoraService.toggleMic() }
     func toggleCamera() { agoraService.toggleCamera() }
     func switchCamera() { agoraService.switchCamera() }
@@ -210,7 +234,6 @@ final class CallViewModel: ObservableObject {
         return String(format: "%02d:%02d", m, s)
     }
 
-    // MARK: - Waiting Room (host only)
     private func observeWaitingRoom() {
         guard let sessionID = session.id else { return }
         firestoreService.observeWaitingRoom(sessionID: sessionID)
@@ -251,10 +274,8 @@ final class CallViewModel: ObservableObject {
 
     func buildSummary() -> SessionSummary {
         SessionSummary(
-            session: session,
-            participants: [],
-            participantDurations: [:],
-            longestParticipant: nil,
+            session: session, participants: [],
+            participantDurations: [:], longestParticipant: nil,
             totalMinutes: sessionElapsed / 60
         )
     }

@@ -1,0 +1,90 @@
+# ── Xcode ──
+*.xcodeproj/*
+!*.xcodeproj/project.pbxproj
+!*.xcodeproj/xcshareddata/
+!*.xcodeproj/project.xcworkspace/
+*.xcworkspace/*
+!*.xcworkspace/contents.xcworkspacedata
+*.xcuserstate
+*.xcscmblueprint
+xcuserdata/
+DerivedData/
+*.moved-aside
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3
+
+# ── Swift Package Manager ──
+.build/
+.swiftpm/
+Packages/
+Package.resolved
+
+# ── CocoaPods ──
+Pods/
+*.xcworkspace
+!*.xcodeproj/project.xcworkspace
+
+# ── Firebase / Google ──
+GoogleService-Info.plist
+google-services.json
+firebase-debug.log
+firebase-debug.*.log
+.firebase/
+
+# ── Agora & Secrets ──
+# Jangan commit credentials apapun
+Secrets.swift
+Secrets.plist
+*.secret
+*.key
+*.p8
+*.p12
+*.mobileprovision
+AuthKey_*.p8
+
+# ── Token Server (Vercel) ──
+token-server/node_modules/
+token-server/.vercel/
+token-server/.env
+token-server/.env.local
+
+# ── macOS ──
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+*.icloud
+
+# ── Xcode Previews ──
+PreviewAssets.xcassets/
+
+# ── Build artifacts ──
+*.ipa
+*.dSYM.zip
+*.dSYM
+build/
+
+# ── Fastlane ──
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/**/*.png
+fastlane/test_output
+
+# ── IDE ──
+.idea/
+*.swp
+*.swo
+*~
+.vscode/
+
+# ── Testing ──
+*.xcresult
