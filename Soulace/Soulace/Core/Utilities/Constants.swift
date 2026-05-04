@@ -33,6 +33,6 @@ struct AppConstants {
 
     // MARK: - Mock Video URLs
     struct MockVideos {
-        static let streamURLPlaceholder = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+        static let streamURLPlaceholder = "https://drive.google.com/drive/u/0/folders/1z5nNeX5C4hlV4t7JouabkYGzudsKk-pF"
     }
 }

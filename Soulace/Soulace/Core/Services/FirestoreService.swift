@@ -305,7 +305,7 @@ final class FirestoreService {
             return url.absoluteString
         }
         print("Video file '\(filename).mp4' not found in bundle")
-        return AppConstants.MockVideos.streamURLPlaceholder
+        return AppConstants.MockVideos.streamURLPlaceholder 
     }
 
     func getMockVideos() -> [VideoContent] {

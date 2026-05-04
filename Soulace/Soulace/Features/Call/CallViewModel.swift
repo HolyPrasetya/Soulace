@@ -37,7 +37,6 @@ final class CallViewModel: ObservableObject {
     private let firestoreService = FirestoreService.shared
     private var cancellables     = Set<AnyCancellable>()
     private var sessionTimer: Timer?
-    private var joinTimes: [String: Date] = [:]
 
     var isHost: Bool         { session.hostID == currentUser.id }
     var durationSeconds: Int { session.durationMinutes * 60 }
@@ -79,15 +78,13 @@ final class CallViewModel: ObservableObject {
     // MARK: - Join Call
     func joinCall() {
         guard let userID = currentUser.id else { return }
-        let uid = UInt(abs(userID.hashValue) % 100000)
+        let uid = stableAgoraUID(for: userID)
 
-        // ✅ Callback dipasang sebelum join
         agoraService.onRemoteUserJoined = { [weak self] agoraUID in
             self?.resolveParticipantName(agoraUID: agoraUID)
         }
 
         agoraService.joinChannel(session.agoraChannelName, userID: uid)
-        joinTimes[userID] = Date()
 
         Task {
             try? await firestoreService.addParticipantToSession(
@@ -102,58 +99,56 @@ final class CallViewModel: ObservableObject {
     }
 
     // MARK: - Resolve participant name
-    // ✅ Fix: fetch fresh session dari Firestore untuk dapat participantIDs terbaru
-    // Session object yang di-cache tidak reliable karena teman baru join SETELAH kita load session
+    // ✅ Strategy: scan semua member group dan cocokkan deterministic Agora UID
+    // Tidak bergantung pada participantIDs (timing issue) atau urutan join
     private func resolveParticipantName(agoraUID: UInt) {
         Task {
-            // Fetch fresh session dari Firestore untuk participantIDs terbaru
-            guard let sessionID = session.id,
-                  let freshSession = try? await firestoreService.getSession(id: sessionID) else {
-                // Fallback: coba semua user yang terdaftar di group
-                await resolveFromGroup(agoraUID: agoraUID)
-                return
+            // Coba langsung dari group members — paling reliable
+            if let user = await findUserByAgoraUID(agoraUID, retries: 3) {
+                updateParticipantName(agoraUID: agoraUID, user: user)
+            } else {
+                // Gagal resolve — set nama yang lebih baik dari "Loading..."
+                await MainActor.run {
+                    if let i = self.participants.firstIndex(where: { $0.agoraUID == agoraUID }) {
+                        self.participants[i].name     = "Member"
+                        self.participants[i].initials = "M"
+                    }
+                }
+            }
+        }
+    }
+
+    // ✅ Scan semua member group, cocokkan UID yang dihitung secara deterministik
+    // Retry dengan delay untuk handle timing issue Firestore
+    private func findUserByAgoraUID(_ agoraUID: UInt, retries: Int) async -> SoulaceUser? {
+        for attempt in 0..<retries {
+            // Delay makin lama tiap retry: 0s, 1s, 2s
+            if attempt > 0 {
+                try? await Task.sleep(nanoseconds: UInt64(attempt) * 1_000_000_000)
             }
 
-            // Coba match dari participantIDs session yang fresh
-            for userID in freshSession.participantIDs {
-                let expectedUID = UInt(abs(userID.hashValue) % 100000)
+            // Fetch group untuk dapat member list terbaru
+            guard let group = try? await firestoreService.getGroup(id: session.groupID) else {
+                continue
+            }
+
+            // Scan semua member — skip diri sendiri
+            for userID in group.memberIDs {
+                if userID == currentUser.id { continue }
+
+                let expectedUID = stableAgoraUID(for: userID)
                 if expectedUID == agoraUID {
                     if let user = try? await firestoreService.getUser(id: userID) {
-                        updateParticipantName(agoraUID: agoraUID, user: user)
-                        return
+                        print("✅ Resolved uid \(agoraUID) → \(user.fullName) (attempt \(attempt + 1))")
+                        return user
                     }
                 }
             }
 
-            // Jika tidak ketemu di participantIDs, fallback ke group members
-            await resolveFromGroup(agoraUID: agoraUID)
-        }
-    }
-
-    // ✅ Fallback: match dari semua member di group
-    private func resolveFromGroup(agoraUID: UInt) async {
-        guard let group = try? await firestoreService.getGroup(id: session.groupID) else { return }
-
-        for userID in group.memberIDs { 
-            // Skip diri sendiri
-            if userID == currentUser.id { continue }
-
-            let expectedUID = UInt(abs(userID.hashValue) % 100000)
-            if expectedUID == agoraUID {
-                if let user = try? await firestoreService.getUser(id: userID) {
-                    updateParticipantName(agoraUID: agoraUID, user: user)
-                    return
-                }
-            }
+            print("⚠️ Could not resolve uid \(agoraUID) on attempt \(attempt + 1), retrying...")
         }
 
-        // Jika masih tidak ketemu, set nama default yang lebih baik dari "Loading..."
-        await MainActor.run {
-            if let i = self.participants.firstIndex(where: { $0.agoraUID == agoraUID }) {
-                self.participants[i].name     = "Participant"
-                self.participants[i].initials = "P"
-            }
-        }
+        return nil
     }
 
     @MainActor
@@ -161,8 +156,17 @@ final class CallViewModel: ObservableObject {
         if let i = participants.firstIndex(where: { $0.agoraUID == agoraUID }) {
             participants[i].name     = user.fullName
             participants[i].initials = user.initials
-            print("👤 Resolved uid \(agoraUID) → \(user.fullName)")
         }
+    }
+
+    private func stableAgoraUID(for userID: String) -> UInt {
+        var hash: UInt64 = 5381
+
+        for byte in userID.utf8 {
+            hash = ((hash << 5) &+ hash) &+ UInt64(byte)
+        }
+
+        return UInt(hash % 99_999) + 1
     }
 
     // MARK: - Timer
