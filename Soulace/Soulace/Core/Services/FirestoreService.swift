@@ -5,6 +5,7 @@
 //  Created by Ignasius Holy Prasetya on 02/05/26.
 //
 
+
 import Foundation
 import FirebaseFirestore
 import Combine
@@ -121,6 +122,52 @@ final class FirestoreService {
             .collection(AppConstants.Collections.users)
             .document(userID)
             .updateData(["groupIDs": FieldValue.arrayUnion([groupID])])
+    }
+
+    // MARK: ── DELETE / LEAVE GROUP ──
+
+    /// Delete group entirely (creator only) + remove from all members' groupIDs
+    func deleteGroup(groupID: String, memberIDs: [String]) async throws {
+        // 1. Remove groupID from every member's groupIDs array
+        for memberID in memberIDs {
+            try await db
+                .collection(AppConstants.Collections.users)
+                .document(memberID)
+                .updateData(["groupIDs": FieldValue.arrayRemove([groupID])])
+        }
+
+        // 2. Delete all sessions belonging to this group
+        let sessionsSnapshot = try await db
+            .collection(AppConstants.Collections.sessions)
+            .whereField("groupID", isEqualTo: groupID)
+            .getDocuments()
+
+        for doc in sessionsSnapshot.documents {
+            try await doc.reference.delete()
+        }
+
+        // 3. Delete the group document itself
+        try await db
+            .collection(AppConstants.Collections.groups)
+            .document(groupID)
+            .delete()
+
+        print("🗑️ Firestore: group \(groupID) deleted")
+    }
+
+    /// Leave group (non-creator) — only removes user from memberIDs
+    func leaveGroup(groupID: String, userID: String) async throws {
+        try await db
+            .collection(AppConstants.Collections.groups)
+            .document(groupID)
+            .updateData(["memberIDs": FieldValue.arrayRemove([userID])])
+
+        try await db
+            .collection(AppConstants.Collections.users)
+            .document(userID)
+            .updateData(["groupIDs": FieldValue.arrayRemove([groupID])])
+
+        print("🚪 Firestore: user \(userID) left group \(groupID)")
     }
 
     // MARK: ── SESSIONS ──
@@ -252,45 +299,42 @@ final class FirestoreService {
         return snapshot.documents.compactMap { try? $0.data(as: VideoContent.self) }
     }
 
+    // MARK: - Local Video Bundle URL helper
+    private func bundleVideoURL(_ filename: String) -> String {
+        if let url = Bundle.main.url(forResource: filename, withExtension: "mp4") {
+            return url.absoluteString
+        }
+        print("Video file '\(filename).mp4' not found in bundle")
+        return AppConstants.MockVideos.streamURLPlaceholder
+    }
+
     func getMockVideos() -> [VideoContent] {
         let now = Timestamp(date: Date())
         return [
-            VideoContent(
-                id: "v1", title: "20 Min Morning Flow",
-                instructorName: "Yoga with Adriene",
-                durationMinutes: 20, level: .beginner,
-                category: .morningFlow,
-                thumbnailURL: "", streamURL: AppConstants.MockVideos.streamURLPlaceholder,
-                description: "Start your morning with this gentle flow.",
-                tags: ["morning", "gentle", "full-body"], uploadedAt: now
-            ),
-            VideoContent(
-                id: "v2", title: "Power Yoga 30 Min",
-                instructorName: "Breathe and Flow",
-                durationMinutes: 30, level: .intermediate,
-                category: .powerYoga,
-                thumbnailURL: "", streamURL: AppConstants.MockVideos.streamURLPlaceholder,
-                description: "Build strength and flexibility.",
-                tags: ["power", "strength", "core"], uploadedAt: now
-            ),
-            VideoContent(
-                id: "v3", title: "Yin Yoga Deep Stretch",
-                instructorName: "Sarah Beth Yoga",
-                durationMinutes: 15, level: .beginner,
-                category: .yin,
-                thumbnailURL: "", streamURL: AppConstants.MockVideos.streamURLPlaceholder,
-                description: "Deep relaxing yin poses.",
-                tags: ["yin", "relax", "stretch"], uploadedAt: now
-            ),
-            VideoContent(
-                id: "v4", title: "Evening Wind Down",
-                instructorName: "Yoga with Adriene",
-                durationMinutes: 10, level: .beginner,
-                category: .stretching,
-                thumbnailURL: "", streamURL: AppConstants.MockVideos.streamURLPlaceholder,
-                description: "Gentle evening stretches.",
-                tags: ["evening", "relax", "gentle"], uploadedAt: now
-            )
+            VideoContent(id: "v1", title: "10 Minute Yoga",
+                instructorName: "Soulace", durationMinutes: 10,
+                level: .beginner, category: .stretching,
+                thumbnailURL: "", streamURL: bundleVideoURL("10MinuteYoga"),
+                description: "A quick 10-minute yoga flow perfect for any time of day.",
+                tags: ["quick", "beginner", "warm-up"], uploadedAt: now),
+            VideoContent(id: "v2", title: "15 Minute Yoga",
+                instructorName: "Soulace", durationMinutes: 15,
+                level: .beginner, category: .morningFlow,
+                thumbnailURL: "", streamURL: bundleVideoURL("15MinuteYoga"),
+                description: "A gentle 15-minute morning flow to wake up your body.",
+                tags: ["morning", "gentle", "flow"], uploadedAt: now),
+            VideoContent(id: "v3", title: "20 Minute Yoga",
+                instructorName: "Soulace", durationMinutes: 20,
+                level: .intermediate, category: .morningFlow,
+                thumbnailURL: "", streamURL: bundleVideoURL("20MinuteYoga"),
+                description: "A balanced 20-minute full-body yoga session.",
+                tags: ["full-body", "strength", "flexibility"], uploadedAt: now),
+            VideoContent(id: "v4", title: "30 Minute Yoga",
+                instructorName: "Soulace", durationMinutes: 30,
+                level: .intermediate, category: .powerYoga,
+                thumbnailURL: "", streamURL: bundleVideoURL("30MinuteYoga"),
+                description: "A complete 30-minute power yoga session.",
+                tags: ["power", "endurance", "deep-stretch"], uploadedAt: now)
         ]
     }
 }

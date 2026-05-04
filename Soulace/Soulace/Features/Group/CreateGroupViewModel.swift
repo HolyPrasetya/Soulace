@@ -5,24 +5,24 @@
 //  Created by Ignasius Holy Prasetya on 02/05/26.
 //
 
-
 import Foundation
-import Contacts
 import Combine
+import Contacts
 
 // MARK: - CreateGroupViewModel
 final class CreateGroupViewModel: ObservableObject {
-    @Published var groupName: String            = ""
-    @Published var groupDescription: String     = ""
-    @Published var searchQuery: String          = ""
-    @Published var selectedMembers: [SoulaceUser] = []
-    @Published var searchResults: [SoulaceUser]   = []
-    @Published var isLoading: Bool              = false
-    @Published var showContactsPermission: Bool = false
-    @Published var isSyncingContacts: Bool      = false
-    @Published var errorMessage: String?        = nil
-    @Published var createdGroup: YogaGroup?     = nil
-    @Published var isCreated: Bool              = false
+    @Published var groupName:             String         = ""
+    @Published var groupDescription:      String         = ""
+    @Published var searchQuery:           String         = ""
+    @Published var selectedMembers:       [SoulaceUser]  = []
+    @Published var searchResults:         [SoulaceUser]  = []
+    @Published var isLoading:             Bool           = false
+    @Published var isSyncingContacts:     Bool           = false  // Bug 2 fix
+    @Published var showContactsPermission: Bool          = false
+    @Published var contactSyncMessage:    String?        = nil    // Bug 2 fix
+    @Published var errorMessage:          String?        = nil
+    @Published var createdGroup:          YogaGroup?     = nil
+    @Published var isCreated:             Bool           = false
 
     private let firestoreService = FirestoreService.shared
     private let authService      = AuthService.shared
@@ -30,7 +30,7 @@ final class CreateGroupViewModel: ObservableObject {
 
     var canCreate: Bool { !groupName.isBlank }
 
-    // MARK: - Search Users (Firestore by name)
+    // MARK: - Search Firestore Users
     @MainActor
     func searchUsers() async {
         guard !searchQuery.isBlank else {
@@ -45,6 +45,7 @@ final class CreateGroupViewModel: ObservableObject {
         }
     }
 
+    // MARK: - Toggle member selection
     func toggleMember(_ user: SoulaceUser) {
         if selectedMembers.contains(where: { $0.id == user.id }) {
             selectedMembers.removeAll { $0.id == user.id }
@@ -57,86 +58,86 @@ final class CreateGroupViewModel: ObservableObject {
         selectedMembers.contains { $0.id == user.id }
     }
 
-    // MARK: - Request Contacts & Sync
+    // MARK: ── Bug 2 Fix: Contacts Sync Actually Works ──
     func requestContactsSync() {
         let store = CNContactStore()
         store.requestAccess(for: .contacts) { [weak self] granted, error in
-            guard let self else { return }
             DispatchQueue.main.async {
+                guard let self else { return }
                 if granted {
                     Task { await self.syncContactsWithFirestore(store: store) }
                 } else {
-                    // User denied — show alert to guide them to Settings
-                    self.errorMessage = "Contacts access denied. Please enable it in Settings → Privacy → Contacts."
+                    self.contactSyncMessage = "Contacts access denied. Enable in Settings → Soulace → Contacts."
                 }
             }
         }
     }
 
-    // MARK: - Fetch contacts from phonebook → match email ke Firestore users
     @MainActor
     private func syncContactsWithFirestore(store: CNContactStore) async {
         isSyncingContacts = true
-        errorMessage      = nil
+        contactSyncMessage = nil
 
-        // 1. Ambil semua kontak yang punya email
-        let keysToFetch: [CNKeyDescriptor] = [
-            CNContactGivenNameKey as CNKeyDescriptor,
-            CNContactFamilyNameKey as CNKeyDescriptor,
-            CNContactEmailAddressesKey as CNKeyDescriptor
-        ]
-
-        var contactEmails: [String] = []
         do {
+            // 1. Fetch all contact emails from device
+            let keysToFetch = [CNContactEmailAddressesKey] as [CNKeyDescriptor]
+            var emails: [String] = []
+
             let request = CNContactFetchRequest(keysToFetch: keysToFetch)
             try store.enumerateContacts(with: request) { contact, _ in
-                for email in contact.emailAddresses {
-                    let emailStr = (email.value as String).lowercased().trimmed
-                    if !emailStr.isEmpty { contactEmails.append(emailStr) }
-                }
+                let contactEmails = contact.emailAddresses.map { $0.value as String }
+                emails.append(contentsOf: contactEmails)
             }
+
+            guard !emails.isEmpty else {
+                contactSyncMessage = "No email contacts found on this device."
+                isSyncingContacts = false
+                return
+            }
+
+            print("📱 Contacts: found \(emails.count) emails, querying Firestore...")
+
+            // 2. Query Firestore for users with those emails (in batches of 10 — Firestore limit)
+            var foundUsers: [SoulaceUser] = []
+            let emailChunks = stride(from: 0, to: emails.count, by: 10).map {
+                Array(emails[$0..<min($0 + 10, emails.count)])
+            }
+
+            for chunk in emailChunks {
+                let users = try await firestoreService.getUsersByEmails(chunk)
+                foundUsers.append(contentsOf: users)
+            }
+
+            // 3. Exclude self and already-selected members
+            let selfID = authService.currentUser?.id
+            let filtered = foundUsers.filter { user in
+                user.id != selfID &&
+                !selectedMembers.contains(where: { $0.id == user.id })
+            }
+
+            if filtered.isEmpty {
+                contactSyncMessage = "None of your contacts are on Soulace yet."
+            } else {
+                // Show found users in search results
+                searchResults = filtered
+                contactSyncMessage = "Found \(filtered.count) friend(s) on Soulace!"
+            }
+
+            print("📱 Contacts sync: found \(filtered.count) Soulace users")
+
         } catch {
-            isSyncingContacts = false
-            errorMessage = "Failed to read contacts: \(error.localizedDescription)"
-            return
-        }
-
-        guard !contactEmails.isEmpty else {
-            isSyncingContacts = false
-            errorMessage = "No contacts with email found."
-            return
-        }
-
-        // 2. Match email ke Firestore users
-        var matched: [SoulaceUser] = []
-        // Batch per 10 (Firestore 'in' limit)
-        let batches = stride(from: 0, to: contactEmails.count, by: 10).map {
-            Array(contactEmails[$0..<min($0 + 10, contactEmails.count)])
-        }
-
-        for batch in batches {
-            if let users = try? await firestoreService.getUsersByEmails(batch) {
-                let filtered = users.filter { $0.id != authService.currentUser?.id }
-                matched.append(contentsOf: filtered)
-            }
+            contactSyncMessage = "Could not read contacts: \(error.localizedDescription)"
+            print("📱 Contacts sync error: \(error)")
         }
 
         isSyncingContacts = false
-
-        if matched.isEmpty {
-            errorMessage = "None of your contacts are on Soulace yet."
-        } else {
-            // Tampilkan ke search results supaya bisa dipilih
-            searchResults = matched
-            searchQuery   = "" // clear query so user sees the synced results
-        }
     }
 
     // MARK: - Create Group
     @MainActor
     func createGroup() async {
         guard let currentUser = authService.currentUser,
-              let userID = currentUser.id else { return }
+              let userID      = currentUser.id else { return }
 
         isLoading    = true
         errorMessage = nil
@@ -153,23 +154,30 @@ final class CreateGroupViewModel: ObservableObject {
 
         do {
             let groupID = try await firestoreService.createGroup(group)
-            var created = YogaGroup(
-                id:          groupID,
-                name:        group.name,
-                description: group.description,
-                creatorID:   group.creatorID,
-                memberIDs:   memberIDs,
-                inviteCode:  group.inviteCode
-            )
+
+            // Add group to all members
             for memberID in memberIDs {
                 try await firestoreService.addUserToGroup(groupID: groupID, userID: memberID)
             }
+
             NotificationService.shared.subscribeToGroup(groupID)
-            createdGroup = created
-            isCreated    = true
+
+            createdGroup = YogaGroup(
+                id:          groupID,
+                name:        group.name,
+                description: group.description,
+                creatorID:   userID,
+                memberIDs:   memberIDs,
+                inviteCode:  group.inviteCode
+            )
+            isCreated = true
+            print("✅ Group created: \(group.name) with \(memberIDs.count) members")
+
         } catch {
             errorMessage = error.localizedDescription
+            print("❌ Create group error: \(error)")
         }
+
         isLoading = false
     }
 }

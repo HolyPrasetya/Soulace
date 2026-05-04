@@ -5,10 +5,6 @@
 //  Created by Ignasius Holy Prasetya on 02/05/26.
 //
 
-//
-//  CallViewModel.swift
-//  Soulace
-//
 
 import Foundation
 import Combine
@@ -26,6 +22,7 @@ final class CallViewModel: ObservableObject {
     @Published var sessionElapsed: Int              = 0
     @Published var sessionRemaining: Int            = 0
     @Published var showVideoPlayer: Bool            = false
+    @Published var isVideoPlaying: Bool             = true    // Bug 3: control embedded player
     @Published var showParticipantsPanel: Bool      = false   // ← Bug 3: panel participants
     @Published var showAdmitSheet: Bool             = false
     @Published var pendingEntry: WaitingEntry?      = nil
@@ -90,6 +87,12 @@ final class CallViewModel: ObservableObject {
     func joinCall() {
         guard let userID = currentUser.id else { return }
         let uid = UInt(abs(userID.hashValue) % 100000)
+
+        // Wire name resolution callback BEFORE joining
+        agoraService.onRemoteUserJoined = { [weak self] agoraUID in
+            self?.fetchParticipantName(agoraUID: agoraUID)
+        }
+
         agoraService.joinChannel(session.agoraChannelName, userID: uid)
         joinTimes[userID] = Date()
 
@@ -105,6 +108,30 @@ final class CallViewModel: ObservableObject {
         }
 
         if isHost { observeWaitingRoom() }
+    }
+
+    // MARK: - Fetch participant name from Firestore by agoraUID
+    // Maps Agora UID → Firestore userID via participantIDs in session
+    private func fetchParticipantName(agoraUID: UInt) {
+        // Match agoraUID to Firestore userID: UID = abs(userID.hashValue) % 100000
+        let participantIDs = session.participantIDs
+        Task {
+            for userID in participantIDs {
+                let expectedUID = UInt(abs(userID.hashValue) % 100000)
+                if expectedUID == agoraUID {
+                    if let user = try? await firestoreService.getUser(id: userID) {
+                        await MainActor.run {
+                            if let i = self.participants.firstIndex(where: { $0.agoraUID == agoraUID }) {
+                                self.participants[i].name     = user.fullName
+                                self.participants[i].initials = user.initials
+                                print("👤 Resolved uid \(agoraUID) → \(user.fullName)")
+                            }
+                        }
+                    }
+                    return
+                }
+            }
+        }
     }
 
     // MARK: - Bug 4: Manual start timer (jika Agora lambat join atau testing tanpa Agora)

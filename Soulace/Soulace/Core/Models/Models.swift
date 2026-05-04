@@ -79,6 +79,12 @@ struct YogaGroup: Identifiable, Codable {
 
 // MARK: - Yoga Session
 struct YogaSession: Identifiable, Codable {
+    private static let timeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        return formatter
+    }()
+
     @DocumentID var id: String?
     var groupID:           String
     var groupName:         String
@@ -103,7 +109,7 @@ struct YogaSession: Identifiable, Codable {
     }
 
     var timeRangeString: String {
-        "\(scheduledDate.timeString) - \(endDate.timeString)"
+        "\(Self.timeFormatter.string(from: scheduledDate)) - \(Self.timeFormatter.string(from: endDate))"
     }
 
     init(id: String?               = nil,
