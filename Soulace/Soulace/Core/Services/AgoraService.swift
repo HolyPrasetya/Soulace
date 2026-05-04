@@ -179,7 +179,7 @@ extension AgoraService: AgoraRtcEngineDelegate {
         let participant = CallParticipant(
             id:       "\(uid)",
             agoraUID: uid,
-            name:     "test...",
+            name:     "Loading...",
             initials: "?"
         )
         DispatchQueue.main.async {

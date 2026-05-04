@@ -31,7 +31,9 @@ final class CallViewModel: ObservableObject {
 
     let session: YogaSession
     let currentUser: SoulaceUser
-    var selectedVideo: VideoContent?
+    @Published var selectedVideo: VideoContent?
+    
+    private var resolvedNames: [UInt: (name: String, initials: String)] = [:]
 
     private let agoraService     = AgoraService.shared
     private let firestoreService = FirestoreService.shared
@@ -56,7 +58,19 @@ final class CallViewModel: ObservableObject {
     private func observeAgora() {
         agoraService.$remoteParticipants
             .receive(on: DispatchQueue.main)
-            .assign(to: &$participants)
+            .sink { [weak self] newParticipants in
+                guard let self else { return }
+                // Merge: ambil array baru dari Agora, tapi tempel nama yang sudah diresolved
+                self.participants = newParticipants.map { p in
+                    var updated = p
+                    if let resolved = self.resolvedNames[p.agoraUID] {
+                        updated.name     = resolved.name
+                        updated.initials = resolved.initials
+                    }
+                    return updated
+                }
+            }
+            .store(in: &cancellables)
 
         agoraService.$isMuted
             .receive(on: DispatchQueue.main)
@@ -153,6 +167,10 @@ final class CallViewModel: ObservableObject {
 
     @MainActor
     private func updateParticipantName(agoraUID: UInt, user: SoulaceUser) {
+        // Simpan ke dictionary — tidak akan hilang walau array di-overwrite
+        resolvedNames[agoraUID] = (user.fullName, user.initials)
+        
+        // Update array sekarang juga
         if let i = participants.firstIndex(where: { $0.agoraUID == agoraUID }) {
             participants[i].name     = user.fullName
             participants[i].initials = user.initials

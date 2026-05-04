@@ -22,7 +22,7 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		F87A30CB2FA3CA1F007904D5 /* Exceptions for "Soulace" folder in "Soulace" target */ = {
+		F87A330F2FA8F1B4007904D5 /* Exceptions for "Soulace" folder in "Soulace" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
@@ -35,7 +35,7 @@
 		F8D6D76F2FA26C85006806D0 /* Soulace */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				F87A30CB2FA3CA1F007904D5 /* Exceptions for "Soulace" folder in "Soulace" target */,
+				F87A330F2FA8F1B4007904D5 /* Exceptions for "Soulace" folder in "Soulace" target */,
 			);
 			path = Soulace;
 			sourceTree = "<group>";
