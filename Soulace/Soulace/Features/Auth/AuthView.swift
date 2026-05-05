@@ -90,7 +90,7 @@ struct AuthView: View {
                     .tracking(5)
                     .foregroundColor(colorDark)
 
-                Text("Practice together")
+                Text("Yoga together")
                     .font(.system(size: 14))
                     .foregroundColor(colorDark.opacity(0.5))
             }

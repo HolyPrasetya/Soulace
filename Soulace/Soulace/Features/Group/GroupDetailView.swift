@@ -11,7 +11,6 @@ import SwiftUI
 struct GroupDetailView: View {
     @StateObject private var vm: GroupDetailViewModel
     @EnvironmentObject var appState: AppState
-    @Environment(\.dismiss) private var dismiss
 
     init(group: YogaGroup) {
         _vm = StateObject(wrappedValue: GroupDetailViewModel(group: group))
@@ -26,7 +25,6 @@ struct GroupDetailView: View {
                     groupHeader
                     inviteCodeCard
                     sessionsSection
-                    groupActionButton  // Delete or Leave
                     Spacer().frame(height: 40)
                 }
                 .padding(.horizontal, 20)
@@ -74,34 +72,6 @@ struct GroupDetailView: View {
         .sheet(isPresented: $vm.showCreateSession, onDismiss: { vm.fetchSessions() }) {
             CreateSessionView(groups: [vm.group])
         }
-        // Delete confirm alert
-        .alert("Delete Group", isPresented: $vm.showDeleteConfirm) {
-            Button("Cancel", role: .cancel) {}
-            Button("Delete", role: .destructive) {
-                Task { await vm.deleteGroup() }
-            }
-        } message: {
-            Text("This will permanently delete \"\(vm.group.name)\" and all its sessions. This cannot be undone.")
-        }
-        // Leave confirm alert
-        .alert("Leave Group", isPresented: $vm.showLeaveConfirm) {
-            Button("Cancel", role: .cancel) {}
-            Button("Leave", role: .destructive) {
-                Task { await vm.leaveGroup() }
-            }
-        } message: {
-            Text("You will no longer have access to \"\(vm.group.name)\".")
-        }
-        // Navigate back after delete/leave
-        .onChange(of: vm.groupDeleted) { deleted in
-            if deleted { dismiss() }
-        }
-        // Error
-        .alert("Error", isPresented: .constant(vm.errorMessage != nil)) {
-            Button("OK") { vm.errorMessage = nil }
-        } message: {
-            Text(vm.errorMessage ?? "")
-        }
     }
 
     // MARK: - Group Header
@@ -124,7 +94,7 @@ struct GroupDetailView: View {
 
             VStack(spacing: 5) {
                 Text(vm.group.name)
-                    .font(.system(size: 22, weight: .bold))
+                    .font(.custom("Georgia-Bold", size: 22))
                     .foregroundColor(Color.soulaceDark)
 
                 if !vm.group.description.isBlank {
@@ -165,14 +135,18 @@ struct GroupDetailView: View {
                     .foregroundColor(Color.soulaceAccent)
                     .tracking(3)
             }
+
             Spacer()
+
             Button(action: { vm.copyInviteCode() }) {
                 Label("Copy", systemImage: "doc.on.doc.fill")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(Color.soulaceAccent)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 9)
-                    .background(Capsule().fill(Color.soulaceAccent.opacity(0.1)))
+                    .background(
+                        Capsule().fill(Color.soulaceAccent.opacity(0.1))
+                    )
             }
             .buttonStyle(SoulaceScaleButtonStyle())
         }
@@ -226,13 +200,16 @@ struct GroupDetailView: View {
             Image(systemName: "calendar.badge.plus")
                 .font(.system(size: 38))
                 .foregroundColor(Color.soulaceAccent.opacity(0.35))
+
             Text("No upcoming sessions")
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundColor(Color.soulaceDark.opacity(0.55))
+
             Text("Schedule a session so your group\ncan practice together")
                 .font(.system(size: 13))
                 .foregroundColor(Color.soulaceDark.opacity(0.4))
                 .multilineTextAlignment(.center)
+
             Button(action: { vm.showCreateSession = true }) {
                 Text("Schedule a Session")
                     .font(.system(size: 14, weight: .semibold))
@@ -253,39 +230,6 @@ struct GroupDetailView: View {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .fill(Color.white.opacity(0.7))
         )
-    }
-
-    // MARK: - Delete / Leave Button
-    private var groupActionButton: some View {
-        Button(action: {
-            if vm.isCreator {
-                vm.showDeleteConfirm = true
-            } else {
-                vm.showLeaveConfirm = true
-            }
-        }) {
-            HStack(spacing: 10) {
-                if vm.isDeleting {
-                    ProgressView()
-                        .tint(.red)
-                        .scaleEffect(0.85)
-                } else {
-                    Image(systemName: vm.groupActionIcon)
-                        .font(.system(size: 15))
-                }
-                Text(vm.isDeleting ? "Please wait..." : vm.groupActionLabel)
-                    .font(.system(size: 15, weight: .semibold))
-            }
-            .foregroundColor(.red)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 15)
-            .background(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(Color.red.opacity(0.07))
-            )
-        }
-        .buttonStyle(SoulaceScaleButtonStyle())
-        .disabled(vm.isDeleting)
     }
 }
 
@@ -330,19 +274,27 @@ struct SessionRowCard: View {
 
             Spacer()
 
+            // Join / Rejoin button
             if let user = appState.currentUser {
+                let isLive    = session.status == .live
+                let label     = isLive ? "Rejoin" : "Join"
+                let color     = isLive ? Color.green : Color.soulaceAccent
                 NavigationLink(destination: CallView(session: session, currentUser: user)) {
-                    Text("Join")
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
-                        .background(
-                            Capsule()
-                                .fill(Color.soulaceAccent)
-                                .shadow(color: Color.soulaceAccent.opacity(0.3),
-                                        radius: 5, x: 0, y: 3)
-                        )
+                    HStack(spacing: 5) {
+                        if isLive {
+                            Circle().fill(Color.white).frame(width: 6, height: 6)
+                        }
+                        Text(label)
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundColor(.white)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .background(
+                        Capsule()
+                            .fill(color)
+                            .shadow(color: color.opacity(0.35), radius: 5, x: 0, y: 3)
+                    )
                 }
                 .buttonStyle(SoulaceScaleButtonStyle())
             }
@@ -356,12 +308,14 @@ struct SessionRowCard: View {
     }
 
     private var monthAbbr: String {
-        let f = DateFormatter(); f.dateFormat = "MMM"
+        let f = DateFormatter()
+        f.dateFormat = "MMM"
         return f.string(from: session.scheduledDate)
     }
 
     private var dayNumber: String {
-        let f = DateFormatter(); f.dateFormat = "d"
+        let f = DateFormatter()
+        f.dateFormat = "d"
         return f.string(from: session.scheduledDate)
     }
 }

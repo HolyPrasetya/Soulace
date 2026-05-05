@@ -13,11 +13,12 @@ import Combine
 struct CallControlsView: View {
     let isMuted:        Bool
     let isCameraOff:    Bool
+    var videoIsLocked:  Bool = false  // true = ada video jalan, tombol terkunci
     let onMic:          () -> Void
     let onCamera:       () -> Void
     let onSwitch:       () -> Void
     let onVideo:        () -> Void
-    let onParticipants: () -> Void   // ← Bug 3: callback baru
+    let onParticipants: () -> Void
     let onEnd:          () -> Void
 
     var body: some View {
@@ -75,11 +76,11 @@ struct CallControlsView: View {
 
             Spacer()
 
-            // Share Video button
+            // Share Video — terkunci kalau sudah ada video jalan
             CallControlButton(
-                icon:   "play.rectangle.fill",
-                label:  "Video",
-                tint:   .white,
+                icon:   videoIsLocked ? "lock.fill" : "play.rectangle.fill",
+                label:  videoIsLocked ? "Locked" : "Video",
+                tint:   videoIsLocked ? Color.gray.opacity(0.6) : .white,
                 action: onVideo
             )
 

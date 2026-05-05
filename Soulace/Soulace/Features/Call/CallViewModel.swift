@@ -9,9 +9,12 @@
 import Foundation
 import Combine
 import AVFoundation
+import UIKit
+import FirebaseFirestore
 
 final class CallViewModel: ObservableObject {
 
+    // MARK: - Published State
     @Published var participants: [CallParticipant]  = []
     @Published var waitingEntries: [WaitingEntry]   = []
     @Published var isJoined: Bool                   = false
@@ -20,7 +23,7 @@ final class CallViewModel: ObservableObject {
     @Published var sessionElapsed: Int              = 0
     @Published var sessionRemaining: Int            = 0
     @Published var showVideoPlayer: Bool            = false
-    @Published var isVideoPlaying: Bool             = true
+    @Published var isVideoPlaying: Bool             = false
     @Published var showParticipantsPanel: Bool      = false
     @Published var showAdmitSheet: Bool             = false
     @Published var pendingEntry: WaitingEntry?      = nil
@@ -29,28 +32,53 @@ final class CallViewModel: ObservableObject {
     @Published var isTimerRunning: Bool             = false
     @Published var navigateHome: Bool               = false
 
+    @Published var syncedVideo: VideoContent?       = nil
+    @Published var syncedPosition: Double           = 0
+    @Published var syncedIsPlaying: Bool            = false
+    @Published var lastSyncTimestamp: Date          = Date()
+
+    @Published var resolvedParticipants: [SoulaceUser] = []
+    @Published var finalSummary: SessionSummary?    = nil
+
+    var selectedVideo: VideoContent?
+
     let session: YogaSession
     let currentUser: SoulaceUser
-    @Published var selectedVideo: VideoContent?
-    
-    private var resolvedNames: [UInt: (name: String, initials: String)] = [:]
 
     private let agoraService     = AgoraService.shared
     private let firestoreService = FirestoreService.shared
     private var cancellables     = Set<AnyCancellable>()
     private var sessionTimer: Timer?
+    private var seenParticipantIDs: Set<String>      = []
+    private var backgroundEnteredAt: Date?           = nil
+    private var backgroundObservers: [NSObjectProtocol] = []
+    private var lastElapsedSync: Date                = Date()
+    private var participantJoinTimes: [String: Date] = [:]
+    private var resolvedUsersByAgoraUID: [UInt: SoulaceUser] = [:]
+
+    // ✅ Fix race condition: track semua Task resolve yang sedang berjalan
+    // Saat leaveCall(), kita tunggu semua Task ini selesai dulu
+    // baru build summary
+    private var resolveTasks: [UInt: Task<Void, Never>] = [:]
 
     var isHost: Bool         { session.hostID == currentUser.id }
     var durationSeconds: Int { session.durationMinutes * 60 }
     var elapsedFormatted: String   { formatTime(sessionElapsed) }
-    var remainingFormatted: String { formatTime(sessionRemaining) }
+    var remainingFormatted: String { formatTime(max(0, durationSeconds - sessionElapsed)) }
     var participantCount: Int      { participants.count + 1 }
 
+    static func stableUID(from userID: String) -> UInt {
+        var hash: UInt64 = 5381
+        for byte in userID.utf8 { hash = ((hash << 5) &+ hash) &+ UInt64(byte) }
+        return UInt(hash % 99_999) + 1
+    }
+
     init(session: YogaSession, currentUser: SoulaceUser, video: VideoContent? = nil) {
-        self.session          = session
-        self.currentUser      = currentUser
-        self.selectedVideo    = video
-        self.sessionRemaining = session.durationMinutes * 60
+        self.session       = session
+        self.currentUser   = currentUser
+        self.selectedVideo = video
+        self.sessionElapsed   = session.elapsedSeconds
+        self.sessionRemaining = max(0, session.durationMinutes * 60 - session.elapsedSeconds)
         observeAgora()
     }
 
@@ -58,19 +86,7 @@ final class CallViewModel: ObservableObject {
     private func observeAgora() {
         agoraService.$remoteParticipants
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] newParticipants in
-                guard let self else { return }
-                // Merge: ambil array baru dari Agora, tapi tempel nama yang sudah diresolved
-                self.participants = newParticipants.map { p in
-                    var updated = p
-                    if let resolved = self.resolvedNames[p.agoraUID] {
-                        updated.name     = resolved.name
-                        updated.initials = resolved.initials
-                    }
-                    return updated
-                }
-            }
-            .store(in: &cancellables)
+            .assign(to: &$participants)
 
         agoraService.$isMuted
             .receive(on: DispatchQueue.main)
@@ -92,7 +108,10 @@ final class CallViewModel: ObservableObject {
     // MARK: - Join Call
     func joinCall() {
         guard let userID = currentUser.id else { return }
-        let uid = stableAgoraUID(for: userID)
+        let uid = CallViewModel.stableUID(from: userID)
+        print("📡 My stableUID: \(uid)")
+
+        participantJoinTimes[userID] = Date()
 
         agoraService.onRemoteUserJoined = { [weak self] agoraUID in
             self?.resolveParticipantName(agoraUID: agoraUID)
@@ -110,92 +129,100 @@ final class CallViewModel: ObservableObject {
         }
 
         if isHost { observeWaitingRoom() }
+        observeSessionSync()
     }
 
-    // MARK: - Resolve participant name
-    // ✅ Strategy: scan semua member group dan cocokkan deterministic Agora UID
-    // Tidak bergantung pada participantIDs (timing issue) atau urutan join
-    private func resolveParticipantName(agoraUID: UInt) {
-        Task {
-            // Coba langsung dari group members — paling reliable
-            if let user = await findUserByAgoraUID(agoraUID, retries: 3) {
-                updateParticipantName(agoraUID: agoraUID, user: user)
-            } else {
-                // Gagal resolve — set nama yang lebih baik dari "Loading..."
-                await MainActor.run {
-                    if let i = self.participants.firstIndex(where: { $0.agoraUID == agoraUID }) {
-                        self.participants[i].name     = "Member"
-                        self.participants[i].initials = "M"
-                    }
-                }
-            }
+    // MARK: - Realtime Session Observer
+    private func observeSessionSync() {
+        guard let sessionID = session.id else {
+            print("⚠️ observeSessionSync: session.id nil")
+            return
         }
+        firestoreService.observeSession(id: sessionID)
+            .receive(on: DispatchQueue.main)
+            .sink(receiveCompletion: { _ in },
+                  receiveValue: { [weak self] freshSession in
+                      guard let self, let fresh = freshSession else { return }
+                      self.handleVideoSync(fresh.videoSync)
+                      if !self.isHost {
+                          let diff = abs(fresh.elapsedSeconds - self.sessionElapsed)
+                          if diff > 5 {
+                              self.sessionElapsed   = fresh.elapsedSeconds
+                              self.sessionRemaining = max(0, self.durationSeconds - fresh.elapsedSeconds)
+                          }
+                      }
+                      for pid in fresh.participantIDs {
+                          if self.participantJoinTimes[pid] == nil {
+                              self.participantJoinTimes[pid] = Date()
+                          }
+                      }
+                  })
+            .store(in: &cancellables)
     }
 
-    // ✅ Scan semua member group, cocokkan UID yang dihitung secara deterministik
-    // Retry dengan delay untuk handle timing issue Firestore
-    private func findUserByAgoraUID(_ agoraUID: UInt, retries: Int) async -> SoulaceUser? {
-        for attempt in 0..<retries {
-            // Delay makin lama tiap retry: 0s, 1s, 2s
-            if attempt > 0 {
-                try? await Task.sleep(nanoseconds: UInt64(attempt) * 1_000_000_000)
-            }
-
-            // Fetch group untuk dapat member list terbaru
-            guard let group = try? await firestoreService.getGroup(id: session.groupID) else {
-                continue
-            }
-
-            // Scan semua member — skip diri sendiri
-            for userID in group.memberIDs {
-                if userID == currentUser.id { continue }
-
-                let expectedUID = stableAgoraUID(for: userID)
-                if expectedUID == agoraUID {
-                    if let user = try? await firestoreService.getUser(id: userID) {
-                        print("✅ Resolved uid \(agoraUID) → \(user.fullName) (attempt \(attempt + 1))")
-                        return user
-                    }
-                }
-            }
-
-            print("⚠️ Could not resolve uid \(agoraUID) on attempt \(attempt + 1), retrying...")
+    // MARK: - Video Sync Handler
+    private func handleVideoSync(_ sync: VideoSyncState?) {
+        guard let sync else {
+            if syncedVideo != nil { syncedVideo = nil; syncedIsPlaying = false }
+            return
         }
-
-        return nil
+        if sync.updatedBy == currentUser.id { return }
+        guard Date().timeIntervalSince(sync.updatedAt.dateValue()) < 5 else { return }
+        if syncedVideo?.id != sync.videoID {
+            if let video = firestoreService.getMockVideos().first(where: { $0.id == sync.videoID }) {
+                syncedVideo = video; selectedVideo = video
+            }
+        }
+        syncedPosition = sync.position; syncedIsPlaying = sync.isPlaying
+        lastSyncTimestamp = Date()
     }
 
-    @MainActor
-    private func updateParticipantName(agoraUID: UInt, user: SoulaceUser) {
-        // Simpan ke dictionary — tidak akan hilang walau array di-overwrite
-        resolvedNames[agoraUID] = (user.fullName, user.initials)
-        
-        // Update array sekarang juga
-        if let i = participants.firstIndex(where: { $0.agoraUID == agoraUID }) {
-            participants[i].name     = user.fullName
-            participants[i].initials = user.initials
-        }
+    // MARK: - Video Control
+    func selectAndSyncVideo(_ video: VideoContent) {
+        selectedVideo = video; syncedVideo = video; syncedIsPlaying = true
+        broadcastVideoState(video: video, isPlaying: true, position: 0)
     }
-
-    private func stableAgoraUID(for userID: String) -> UInt {
-        var hash: UInt64 = 5381
-
-        for byte in userID.utf8 {
-            hash = ((hash << 5) &+ hash) &+ UInt64(byte)
-        }
-
-        return UInt(hash % 99_999) + 1
+    func syncPlayPause(isPlaying: Bool, position: Double) {
+        syncedIsPlaying = isPlaying
+        broadcastVideoState(video: syncedVideo ?? selectedVideo, isPlaying: isPlaying, position: position)
+    }
+    func syncSeek(to position: Double) {
+        broadcastVideoState(video: syncedVideo ?? selectedVideo, isPlaying: syncedIsPlaying, position: position)
+    }
+    var videoIsLocked: Bool { syncedVideo?.id != nil }
+    func closeVideo() {
+        selectedVideo = nil; syncedVideo = nil; syncedIsPlaying = false
+        guard let sessionID = session.id else { return }
+        Task { try? await firestoreService.clearVideoSync(sessionID: sessionID) }
+    }
+    private func broadcastVideoState(video: VideoContent?, isPlaying: Bool, position: Double) {
+        guard let video, let videoID = video.id,
+              let sessionID = session.id, let userID = currentUser.id else { return }
+        let sync = VideoSyncState(videoID: videoID, isPlaying: isPlaying, position: position,
+                                  updatedAt: Timestamp(date: Date()), updatedBy: userID)
+        Task { try? await firestoreService.updateVideoSync(sessionID: sessionID, sync: sync) }
     }
 
     // MARK: - Timer
     func startTimer() {
         guard !isTimerRunning else { return }
         isTimerRunning = true
-        sessionTimer   = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+        registerBackgroundObservers()
+        sessionTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             guard let self else { return }
             DispatchQueue.main.async {
                 self.sessionElapsed   += 1
                 self.sessionRemaining  = max(0, self.durationSeconds - self.sessionElapsed)
+                if self.isHost {
+                    let now = Date()
+                    if now.timeIntervalSince(self.lastElapsedSync) >= 10 {
+                        self.lastElapsedSync = now
+                        Task {
+                            try? await self.firestoreService.updateSessionElapsed(
+                                sessionID: self.session.id ?? "", elapsed: self.sessionElapsed)
+                        }
+                    }
+                }
                 if self.sessionRemaining == 0 {
                     self.sessionTimer?.invalidate()
                     self.isTimerRunning = false
@@ -203,47 +230,224 @@ final class CallViewModel: ObservableObject {
                 }
             }
         }
+        RunLoop.main.add(sessionTimer!, forMode: .common)
+    }
+
+    private func registerBackgroundObservers() {
+        backgroundObservers.forEach { NotificationCenter.default.removeObserver($0) }
+        backgroundObservers.removeAll()
+        let enterBg = NotificationCenter.default.addObserver(
+            forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main
+        ) { [weak self] _ in self?.backgroundEnteredAt = Date() }
+        let enterFg = NotificationCenter.default.addObserver(
+            forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            guard let self, let bgDate = self.backgroundEnteredAt else { return }
+            let elapsed = Int(Date().timeIntervalSince(bgDate))
+            self.backgroundEnteredAt  = nil
+            self.sessionElapsed       = min(self.sessionElapsed + elapsed, self.durationSeconds)
+            self.sessionRemaining     = max(0, self.durationSeconds - self.sessionElapsed)
+        }
+        backgroundObservers = [enterBg, enterFg]
     }
 
     func pauseTimer() {
-        sessionTimer?.invalidate()
-        sessionTimer   = nil
-        isTimerRunning = false
+        sessionTimer?.invalidate(); sessionTimer = nil; isTimerRunning = false
+        backgroundObservers.forEach { NotificationCenter.default.removeObserver($0) }
+        backgroundObservers.removeAll()
     }
+    func toggleTimer() { if isTimerRunning { pauseTimer() } else { startTimer() } }
 
-    func toggleTimer() {
-        if isTimerRunning { pauseTimer() } else { startTimer() }
-    }
-
+    // MARK: - Navigation
     func goHome() {
+        if isHost {
+            Task { try? await firestoreService.updateSessionElapsed(
+                sessionID: session.id ?? "", elapsed: sessionElapsed) }
+        }
         DispatchQueue.main.async { self.navigateHome = true }
     }
 
+    // MARK: - End Call
     func leaveCall() {
         pauseTimer()
-        agoraService.leaveChannel()
+        let elapsedSnapshot = sessionElapsed
         Task {
             if isHost {
+                try? await firestoreService.updateSessionElapsed(
+                    sessionID: session.id ?? "", elapsed: elapsedSnapshot)
                 try? await firestoreService.updateSessionStatus(
-                    id: session.id ?? "", status: .completed
-                )
+                    id: session.id ?? "", status: .completed)
             }
+
+            // ✅ Fix race condition: tunggu semua Task resolve selesai dulu
+            // Sebelum build summary, pastikan resolvedUsersByAgoraUID sudah penuh
+            await waitForAllResolveTasks()
+
+            await MainActor.run {
+                self.buildResolvedParticipants(elapsedSnapshot: elapsedSnapshot)
+                self.finalSummary   = self.buildSummary()
+                self.isSessionEnded = true
+                print("🎯 finalSummary built: \(self.resolvedParticipants.map { $0.fullName })")
+            }
+            agoraService.leaveChannel()
         }
-        DispatchQueue.main.async { self.isSessionEnded = true }
     }
 
     private func endSession() {
-        agoraService.leaveChannel()
+        let elapsedSnapshot = sessionElapsed
         Task {
             if isHost {
+                try? await firestoreService.updateSessionElapsed(
+                    sessionID: session.id ?? "", elapsed: elapsedSnapshot)
                 try? await firestoreService.updateSessionStatus(
-                    id: session.id ?? "", status: .completed
-                )
+                    id: session.id ?? "", status: .completed)
             }
+            await waitForAllResolveTasks()
+            await MainActor.run {
+                self.buildResolvedParticipants(elapsedSnapshot: elapsedSnapshot)
+                self.finalSummary   = self.buildSummary()
+                self.isSessionEnded = true
+            }
+            agoraService.leaveChannel()
         }
-        DispatchQueue.main.async { self.isSessionEnded = true }
     }
 
+    // ✅ Tunggu semua Task resolve participant selesai
+    // Dengan timeout 3 detik agar tidak hang selamanya
+    // kalau ada Task yang memang tidak bisa resolve
+    private func waitForAllResolveTasks() async {
+        let tasks = await MainActor.run { Array(resolveTasks.values) }
+        print("⏳ Waiting for \(tasks.count) resolve tasks...")
+        await withTaskGroup(of: Void.self) { group in
+            for task in tasks {
+                group.addTask {
+                    // Timeout 3 detik per task
+                    await withTaskGroup(of: Void.self) { inner in
+                        inner.addTask { await task.value }
+                        inner.addTask {
+                            try? await Task.sleep(nanoseconds: 3_000_000_000)
+                        }
+                        await inner.next()
+                        inner.cancelAll()
+                    }
+                }
+            }
+        }
+        print("✅ All resolve tasks done")
+    }
+
+    // MARK: - Build Resolved Participants
+    @MainActor
+    private func buildResolvedParticipants(elapsedSnapshot: Int) {
+        var users: [SoulaceUser] = []
+
+        // 1. Diri sendiri
+        users.append(currentUser)
+        if let myID = currentUser.id, participantJoinTimes[myID] == nil {
+            participantJoinTimes[myID] = Date().addingTimeInterval(-Double(elapsedSnapshot))
+        }
+
+        // 2. Semua remote user yang sudah di-resolve
+        for (agoraUID, user) in resolvedUsersByAgoraUID {
+            users.append(user)
+            if let uid = user.id, participantJoinTimes[uid] == nil {
+                participantJoinTimes[uid] = Date().addingTimeInterval(-Double(elapsedSnapshot))
+            }
+            print("✅ Summary include: \(user.fullName) (agoraUID: \(agoraUID))")
+        }
+
+        resolvedParticipants = users
+        print("✅ resolvedParticipants: \(users.count) → \(users.map { $0.fullName })")
+    }
+
+    // MARK: - Build Summary
+    func buildSummary() -> SessionSummary {
+        let totalMin   = max(1, sessionElapsed / 60)
+        let sessionEnd = Date()
+        var durations: [String: Int] = [:]
+        for user in resolvedParticipants {
+            guard let uid = user.id else { continue }
+            let joinDate  = participantJoinTimes[uid] ?? session.scheduledDate
+            let secondsIn = Int(sessionEnd.timeIntervalSince(joinDate))
+            durations[uid] = max(1, min(secondsIn / 60, totalMin))
+        }
+        let longest = resolvedParticipants.max {
+            (durations[$0.id ?? ""] ?? 0) < (durations[$1.id ?? ""] ?? 0)
+        }
+        return SessionSummary(
+            session:              session,
+            participants:         resolvedParticipants,
+            participantDurations: durations,
+            longestParticipant:   longest,
+            totalMinutes:         totalMin
+        )
+    }
+
+    // MARK: - Participant Name Resolution
+    func resolveParticipantName(agoraUID: UInt) {
+        // ✅ Simpan Task ke dictionary agar bisa di-await saat leaveCall()
+        let task = Task {
+            if let user = await findUserByAgoraUID(agoraUID, retries: 3) {
+                await updateParticipantName(agoraUID: agoraUID, user: user)
+                await MainActor.run {
+                    self.resolvedUsersByAgoraUID[agoraUID] = user
+                    print("💾 Saved: uid \(agoraUID) → \(user.fullName)")
+                }
+                if let uid = user.id {
+                    seenParticipantIDs.insert(uid)
+                    if participantJoinTimes[uid] == nil {
+                        participantJoinTimes[uid] = Date()
+                    }
+                }
+            } else {
+                await MainActor.run {
+                    if let i = self.participants.firstIndex(where: { $0.agoraUID == agoraUID }) {
+                        self.participants[i].name     = "Member"
+                        self.participants[i].initials = "M"
+                    }
+                }
+            }
+            // Hapus dari resolveTasks setelah selesai
+            await MainActor.run {
+                self.resolveTasks.removeValue(forKey: agoraUID)
+            }
+        }
+        // Simpan task agar bisa di-await
+        resolveTasks[agoraUID] = task
+    }
+
+    private func findUserByAgoraUID(_ agoraUID: UInt, retries: Int) async -> SoulaceUser? {
+        for attempt in 0..<retries {
+            if attempt > 0 {
+                try? await Task.sleep(nanoseconds: UInt64(attempt) * 1_000_000_000)
+            }
+            guard let group = try? await firestoreService.getGroup(id: session.groupID) else {
+                print("❌ getGroup gagal: '\(session.groupID)'")
+                continue
+            }
+            for userID in group.memberIDs {
+                if userID == currentUser.id { continue }
+                if CallViewModel.stableUID(from: userID) == agoraUID {
+                    if let user = try? await firestoreService.getUser(id: userID) {
+                        print("✅ Resolved uid \(agoraUID) → \(user.fullName) (attempt \(attempt + 1))")
+                        return user
+                    }
+                }
+            }
+            print("⚠️ uid \(agoraUID) not resolved, attempt \(attempt + 1)")
+        }
+        return nil
+    }
+
+    @MainActor
+    private func updateParticipantName(agoraUID: UInt, user: SoulaceUser) {
+        if let i = participants.firstIndex(where: { $0.agoraUID == agoraUID }) {
+            participants[i].name     = user.fullName
+            participants[i].initials = user.initials
+        }
+    }
+
+    // MARK: - Controls
     func toggleMic()    { agoraService.toggleMic() }
     func toggleCamera() { agoraService.toggleCamera() }
     func switchCamera() { agoraService.switchCamera() }
@@ -256,6 +460,7 @@ final class CallViewModel: ObservableObject {
         return String(format: "%02d:%02d", m, s)
     }
 
+    // MARK: - Waiting Room
     private func observeWaitingRoom() {
         guard let sessionID = session.id else { return }
         firestoreService.observeWaitingRoom(sessionID: sessionID)
@@ -265,8 +470,7 @@ final class CallViewModel: ObservableObject {
                       guard let self else { return }
                       self.waitingEntries = entries
                       if let first = entries.first, self.pendingEntry == nil {
-                          self.pendingEntry   = first
-                          self.showAdmitSheet = true
+                          self.pendingEntry = first; self.showAdmitSheet = true
                       }
                   })
             .store(in: &cancellables)
@@ -292,13 +496,5 @@ final class CallViewModel: ObservableObject {
                 self.showAdmitSheet = self.pendingEntry != nil
             }
         }
-    }
-
-    func buildSummary() -> SessionSummary {
-        SessionSummary(
-            session: session, participants: [],
-            participantDurations: [:], longestParticipant: nil,
-            totalMinutes: sessionElapsed / 60
-        )
     }
 }

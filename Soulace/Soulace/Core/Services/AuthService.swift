@@ -5,6 +5,7 @@
 //  Created by Ignasius Holy Prasetya on 02/05/26.
 //
 
+
 import Foundation
 import FirebaseAuth
 import AuthenticationServices
@@ -157,20 +158,27 @@ final class AuthService: NSObject, ObservableObject {
 
         Auth.auth().signIn(with: credential) { [weak self] authResult, error in
             guard let self else { return }
-            DispatchQueue.main.async { self.isLoading = false }
 
             if let error {
-                DispatchQueue.main.async { self.error = error.localizedDescription }
+                DispatchQueue.main.async {
+                    self.isLoading = false
+                    self.error = error.localizedDescription
+                }
                 return
             }
 
-            guard let firebaseUser = authResult?.user else { return }
+            guard let firebaseUser = authResult?.user else {
+                DispatchQueue.main.async { self.isLoading = false }
+                return
+            }
 
+            // ✅ isLoading = false SETELAH fetchOrCreateUser selesai
             Task {
                 await self.fetchOrCreateUser(
                     firebaseUser:     firebaseUser,
                     fullNameOverride: fullNameOverride
                 )
+                DispatchQueue.main.async { self.isLoading = false }
             }
         }
     }
