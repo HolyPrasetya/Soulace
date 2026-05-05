@@ -64,7 +64,7 @@ struct YogaGroup: Identifiable, Codable {
 
 // MARK: - Video Sync State
 // Disimpan di Firestore → sessions/{id}.videoSync
-// Semua peserta listen perubahan ini → semua nonton video yang sama di posisi yang sama
+// Semua participant nonton video yang sama dengan yang diplay oleh salah satu participant
 struct VideoSyncState: Codable, Equatable {
     var videoID:   String    // ID video yang sedang diputar
     var isPlaying: Bool      // play atau pause
@@ -88,11 +88,9 @@ struct YogaSession: Identifiable, Codable {
     var durationMinutes:  Int
     var status:           SessionStatus
     var participantIDs:   [String]
-    // ✅ Diisi = sessionID setelah Firestore create (bukan UUID random)
     var agoraChannelName: String
-    // ✅ Video sync state — di-update siapapun yang play/pause/pick video
+    // Video sync state updated oleh siapapun yang play/pause/pick video
     var videoSync:        VideoSyncState?
-    // ✅ Total elapsed detik — persistent across rejoin
     var elapsedSeconds:   Int
     var calendarEventID:  String?
 
@@ -110,7 +108,7 @@ struct YogaSession: Identifiable, Codable {
          videoID: String? = nil, scheduledAt: Timestamp = Timestamp(date: Date()),
          durationMinutes: Int, status: SessionStatus = .scheduled,
          participantIDs: [String] = [],
-         // ✅ Default kosong — diisi sessionID setelah createSession()
+         // Default kosong -> diisi sessionID setelah createSession()
          agoraChannelName: String = "",
          videoSync: VideoSyncState? = nil,
          elapsedSeconds: Int = 0,
@@ -181,8 +179,8 @@ struct CallParticipant: Identifiable {
     let agoraUID:    UInt
     var name:        String
     var initials:    String
-    var isMuted:     Bool = false
-    var isCameraOff: Bool = false
+    var isMuted:     Bool = true
+    var isCameraOff: Bool = true
     var isHost:      Bool = false
     var joinedAt:    Date = Date()
 }

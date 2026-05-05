@@ -28,7 +28,7 @@ struct CallView: View {
                 stickyNavBar.zIndex(10)
                 timerBar.zIndex(9)
 
-                // ✅ Video player — tampil untuk SEMUA jika ada videoSync atau selectedVideo
+                // Video player — tampilin untuk SEMUA PARTICIPANTS jika ada videoSync yg diplay
                 if let video = vm.syncedVideo ?? vm.selectedVideo {
                     SyncedVideoPlayerView(
                         video:        video,
@@ -41,7 +41,6 @@ struct CallView: View {
                             vm.syncSeek(to: position)
                         },
                         onClose: {
-                            // Hanya host yang bisa tutup video
                             vm.closeVideo()
                         },
                         canClose: true
@@ -64,7 +63,7 @@ struct CallView: View {
                     onCamera:       { vm.toggleCamera() },
                     onSwitch:       { vm.switchCamera() },
                     onVideo:        {
-                        // Semua bisa share — tapi locked kalau sudah ada video jalan
+                        // Semua bisa pilih video, tapi locked kalau sudah ada video jalan
                         if vm.syncedVideo == nil { vm.showVideoPlayer = true }
                     },
                     onParticipants: { showParticipants = true },
@@ -92,7 +91,7 @@ struct CallView: View {
             }
         }
         
-        // ✅ Video library sheet — hanya host
+        // Library Video
         .sheet(isPresented: $vm.showVideoPlayer) {
             VideoLibraryView { video in
                 vm.selectAndSyncVideo(video)
@@ -193,7 +192,6 @@ struct CallView: View {
         return LazyVGrid(columns: cols, spacing: 3) {
             LocalVideoTile(
                 user: vm.currentUser, isMuted: vm.isMuted, isCameraOff: vm.isCameraOff,
-                // ✅ Share button untuk semua, tapi hilang kalau sudah ada video jalan
                 showShareButton: vm.syncedVideo == nil,
                 onShareTap: { vm.showVideoPlayer = true }
             )
@@ -207,7 +205,7 @@ struct CallView: View {
 }
 
 // MARK: - Synced Video Player
-// ✅ Video player yang sync play/pause/seek ke semua peserta via Firestore
+// Video player yang sync play/pause/seek ke semua peserta via Firestore
 struct SyncedVideoPlayerView: View {
     let video: VideoContent
     @Binding var isPlaying: Bool
@@ -276,7 +274,6 @@ struct SyncedVideoPlayerView: View {
         .onChange(of: isPlaying) { playing in
             if playing { player?.play() } else { player?.pause() }
         }
-        // ✅ Sync posisi dari Firestore (non-host hanya terima)
         .onChange(of: seekPosition) { pos in
             guard let pos, abs(pos - lastSyncedPosition) > 1 else { return }
             lastSyncedPosition = pos

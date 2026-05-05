@@ -142,15 +142,14 @@ struct AuthView: View {
             // ── Google Sign In ──
             Button(action: { vm.signInWithGoogle() }) {
                 HStack(spacing: 10) {
-                    // Google "G" logo
-                    Image("google_logo") // add this image to Assets
+                    Image("google_logo")
                         .resizable()
                         .scaledToFit()
                         .frame(width: 20, height: 20)
 
                     Text("Sign in with Google")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundColor(Color(red: 0.2, green: 0.2, blue: 0.2))
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundColor(.black)
                 }
                 .frame(maxWidth: .infinity)
                 .frame(height: 54)

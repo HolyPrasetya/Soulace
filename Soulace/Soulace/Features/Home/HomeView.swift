@@ -3,8 +3,8 @@ import SwiftUI
 struct HomeView: View {
     @StateObject private var vm = HomeViewModel()
     @EnvironmentObject var appState: AppState
+    @State private var selectedTab: Int = 0
     @State private var appeared = false
-    // PROFILE FIX: confirmation popup state
     @State private var showLogoutConfirm = false
 
     var body: some View {
@@ -76,15 +76,17 @@ struct HomeView: View {
             .sheet(isPresented: $vm.showJoinSession) {
                 JoinSessionView()
             }
-            // PROFILE FIX: Logout confirmation popup
+            .sheet(isPresented: $vm.showInvitations) {
+                if let userID = vm.currentUser?.id {
+                    InvitationsView(userID: userID)
+                }
+            }
             .confirmationDialog(
                 vm.currentUser?.fullName ?? "Account",
                 isPresented: $showLogoutConfirm,
                 titleVisibility: .visible
             ) {
-                Button("Sign Out", role: .destructive) {
-                    vm.signOut()
-                }
+                Button("Sign Out", role: .destructive) { vm.signOut() }
                 Button("Cancel", role: .cancel) {}
             } message: {
                 Text("Are you sure you want to sign out?")
@@ -122,19 +124,39 @@ struct HomeView: View {
 
             Spacer()
 
-            // PROFILE FIX: Tap avatar → show confirmation popup (not instant sign out)
-            Button(action: { showLogoutConfirm = true }) {
-                ZStack {
-                    Circle()
-                        .fill(Color.white.opacity(0.6))
-                        .frame(width: 42, height: 42)
-                    Text(vm.currentUser?.initials ?? "?")
-                        .font(.system(size: 15, weight: .bold))
-                        .foregroundColor(Color.soulaceAccent)
+            HStack(spacing: 10) {
+                // Bell — invitations badge
+                Button(action: { vm.showInvitations = true }) {
+                    ZStack(alignment: .topTrailing) {
+                        Image(systemName: "bell.fill")
+                            .font(.system(size: 18))
+                            .foregroundColor(Color.soulaceDark.opacity(0.6))
+                            .frame(width: 38, height: 38)
+                        if !vm.pendingInvitations.isEmpty {
+                            ZStack {
+                                Circle().fill(Color.red).frame(width: 16, height: 16)
+                                Text("\(vm.pendingInvitations.count)")
+                                    .font(.system(size: 9, weight: .bold))
+                                    .foregroundColor(.white)
+                            }
+                            .offset(x: 2, y: -2)
+                        }
+                    }
                 }
-                .overlay(Circle().stroke(Color.white.opacity(0.8), lineWidth: 1.5))
+
+                // Avatar / profile
+                Button(action: { showLogoutConfirm = true }) {
+                    ZStack {
+                        Circle()
+                            .fill(Color.white.opacity(0.6))
+                            .frame(width: 42, height: 42)
+                        Text(vm.currentUser?.initials ?? "?")
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundColor(Color.soulaceAccent)
+                    }
+                    .overlay(Circle().stroke(Color.white.opacity(0.8), lineWidth: 1.5))
+                }
             }
-            .buttonStyle(SoulaceScaleButtonStyle())
         }
     }
 
@@ -164,13 +186,13 @@ struct HomeView: View {
             // Create Video Call
             NavigationLink(destination: CreateSessionView(groups: vm.groups)) {
                 QuickActionCard(
-                    gradient:     [Color.soulaceDark, Color(hex: "3D6059")],
-                    icon:         "video.fill",
-                    iconColor:    .white,
-                    iconBg:       Color.white.opacity(0.15),
-                    title:        "Create a Video Call",
-                    subtitle:     "Start an instant yoga session",
-                    titleColor:   .white,
+                    gradient: [Color.soulaceDark, Color(hex: "3D6059")],
+                    icon: "video.fill",
+                    iconColor: .white,
+                    iconBg: Color.white.opacity(0.15),
+                    title: "Create a Video Call",
+                    subtitle: "Start an instant yoga session",
+                    titleColor: .white,
                     subtitleColor: .white.opacity(0.65),
                     chevronColor: .white.opacity(0.5)
                 )
@@ -180,13 +202,13 @@ struct HomeView: View {
             // Join Yoga
             Button(action: { vm.showJoinSession = true }) {
                 QuickActionCard(
-                    gradient:     [Color.white.opacity(0.75), Color.white.opacity(0.55)],
-                    icon:         "person.2.fill",
-                    iconColor:    Color.soulaceAccent,
-                    iconBg:       Color.soulaceAccent.opacity(0.12),
-                    title:        "Join Yoga",
-                    subtitle:     "Join a live yoga session",
-                    titleColor:   Color.soulaceDark,
+                    gradient: [Color.white.opacity(0.75), Color.white.opacity(0.55)],
+                    icon: "person.2.fill",
+                    iconColor: Color.soulaceAccent,
+                    iconBg: Color.soulaceAccent.opacity(0.12),
+                    title: "Join Yoga",
+                    subtitle: "Join a live yoga session",
+                    titleColor: Color.soulaceDark,
                     subtitleColor: Color.soulaceDark.opacity(0.5),
                     chevronColor: Color.soulaceAccent.opacity(0.5),
                     showCodeField: true
@@ -216,26 +238,28 @@ struct HomeView: View {
                     .foregroundColor(Color.soulaceAccent)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
-                    .background(Capsule().fill(Color.soulaceAccent.opacity(0.12)))
+                    .background(
+                        Capsule().fill(Color.soulaceAccent.opacity(0.12))
+                    )
                 }
             }
 
             if vm.isLoading {
                 HStack {
                     Spacer()
-                    ProgressView().tint(Color.soulaceAccent)
+                    ProgressView()
+                        .tint(Color.soulaceAccent)
                     Spacer()
                 }
                 .padding(.vertical, 30)
             } else if vm.groups.isEmpty {
                 EmptyGroupsView { vm.showCreateGroup = true }
             } else {
-                VStack(spacing: 10) {
+                VStack(spacing: 12) {
                     ForEach(vm.groups) { group in
                         NavigationLink(destination: GroupDetailView(group: group)) {
-                            GroupRowCard(
-                                group:   group,
-                                session: vm.upcomingSessions.first { $0.groupID == group.id })
+                            GroupRowCard(group: group,
+                                        session: vm.upcomingSessions.first { $0.groupID == group.id })
                         }
                         .buttonStyle(SoulaceScaleButtonStyle())
                     }
@@ -290,13 +314,13 @@ struct UpcomingSessionCard: View {
 
 // MARK: - Quick Action Card
 struct QuickActionCard: View {
-    let gradient:     [Color]
-    let icon:         String
-    let iconColor:    Color
-    let iconBg:       Color
-    let title:        String
-    let subtitle:     String
-    let titleColor:   Color
+    let gradient: [Color]
+    let icon: String
+    let iconColor: Color
+    let iconBg: Color
+    let title: String
+    let subtitle: String
+    let titleColor: Color
     let subtitleColor: Color
     let chevronColor: Color
     var showCodeField: Bool = false
@@ -353,7 +377,7 @@ struct QuickActionCard: View {
 
 // MARK: - Group Row Card
 struct GroupRowCard: View {
-    let group:   YogaGroup
+    let group: YogaGroup
     let session: YogaSession?
 
     var body: some View {
@@ -393,7 +417,9 @@ struct GroupRowCard: View {
                     .foregroundColor(Color.soulaceAccent)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
-                    .background(Capsule().fill(Color.soulaceAccent.opacity(0.12)))
+                    .background(
+                        Capsule().fill(Color.soulaceAccent.opacity(0.12))
+                    )
             } else {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 13))
@@ -439,7 +465,9 @@ struct EmptyGroupsView: View {
                     .foregroundColor(Color.soulaceAccent)
                     .padding(.horizontal, 20)
                     .padding(.vertical, 10)
-                    .background(Capsule().fill(Color.soulaceAccent.opacity(0.12)))
+                    .background(
+                        Capsule().fill(Color.soulaceAccent.opacity(0.12))
+                    )
             }
         }
         .padding(28)

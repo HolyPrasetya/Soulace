@@ -15,6 +15,7 @@ final class GroupDetailViewModel: ObservableObject {
     @Published var isLoading: Bool           = false
     @Published var errorMessage: String?     = nil
     @Published var showCreateSession: Bool   = false
+    @Published var showInviteMember: Bool    = false
     @Published var showInviteCopied: Bool    = false
     @Published var showDeleteConfirm: Bool   = false  // delete group alert
     @Published var showLeaveConfirm: Bool    = false  // leave group alert

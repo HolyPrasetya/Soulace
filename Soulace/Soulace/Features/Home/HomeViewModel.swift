@@ -5,24 +5,25 @@
 //  Created by Ignasius Holy Prasetya on 02/05/26.
 //
 
-
 import Foundation
 import Combine
 
-// MARK: - HomeViewModel
 final class HomeViewModel: ObservableObject {
-    @Published var groups: [YogaGroup]           = []
-    @Published var upcomingSessions: [YogaSession] = []
-    @Published var isLoading: Bool               = false
-    @Published var errorMessage: String?         = nil
-    @Published var showCreateGroup: Bool         = false
-    @Published var showJoinSession: Bool         = false
+    @Published var groups: [YogaGroup]              = []
+    @Published var upcomingSessions: [YogaSession]  = []
+    @Published var isLoading: Bool                  = false
+    @Published var errorMessage: String?            = nil
+    @Published var showCreateGroup: Bool            = false
+    @Published var showJoinSession: Bool            = false
+    // ✅ Invitations
+    @Published var pendingInvitations: [GroupInvitation] = []
+    @Published var showInvitations: Bool            = false
 
-    private let firestoreService = FirestoreService.shared
-    private let authService      = AuthService.shared
-    private var cancellables     = Set<AnyCancellable>()
-    // Simpan session cancellables terpisah supaya bisa di-reset saat groups berubah
-    private var sessionCancellables = Set<AnyCancellable>()
+    private let firestoreService     = FirestoreService.shared
+    private let authService          = AuthService.shared
+    private let invitationService    = GroupInvitationService.shared
+    private var cancellables         = Set<AnyCancellable>()
+    private var sessionCancellables  = Set<AnyCancellable>()
 
     var currentUser: SoulaceUser? { authService.currentUser }
 
@@ -35,13 +36,14 @@ final class HomeViewModel: ObservableObject {
         }
     }
 
-    init() { fetchGroups() }
+    init() {
+        fetchGroups()
+        observeInvitations()
+    }
 
-    // MARK: - Fetch Groups (realtime listener)
     func fetchGroups() {
         guard let userID = authService.currentUser?.id else { return }
         isLoading = true
-
         firestoreService.getUserGroups(userID: userID)
             .receive(on: DispatchQueue.main)
             .sink(
@@ -55,40 +57,41 @@ final class HomeViewModel: ObservableObject {
                     guard let self else { return }
                     self.groups    = groups
                     self.isLoading = false
-                    // Reset dan re-subscribe session listeners setiap kali groups berubah
                     self.subscribeToAllSessions(for: groups)
                 }
             )
             .store(in: &cancellables)
     }
 
-    // MARK: - Subscribe realtime sessions untuk semua groups
     private func subscribeToAllSessions(for groups: [YogaGroup]) {
-        // Cancel semua session listener lama
         sessionCancellables.removeAll()
         upcomingSessions = []
-
         for group in groups {
             guard let groupID = group.id else { continue }
-
             firestoreService.getUpcomingSessions(groupID: groupID)
                 .receive(on: DispatchQueue.main)
-                .sink(
-                    receiveCompletion: { _ in },
-                    receiveValue: { [weak self] sessions in
-                        guard let self else { return }
-                        // Hapus session lama dari group ini, replace dengan yang baru
-                        self.upcomingSessions.removeAll { $0.groupID == groupID }
-                        self.upcomingSessions.append(contentsOf: sessions)
-                        // Sort by date
-                        self.upcomingSessions.sort { $0.scheduledDate < $1.scheduledDate }
-                    }
-                )
+                .sink(receiveCompletion: { _ in },
+                      receiveValue: { [weak self] sessions in
+                          guard let self else { return }
+                          self.upcomingSessions.removeAll { $0.groupID == groupID }
+                          self.upcomingSessions.append(contentsOf: sessions)
+                          self.upcomingSessions.sort { $0.scheduledDate < $1.scheduledDate }
+                      })
                 .store(in: &sessionCancellables)
         }
     }
 
-    func signOut() {
-        authService.signOut()
+    // ✅ Listen pending invitations realtime
+    private func observeInvitations() {
+        guard let userID = authService.currentUser?.id else { return }
+        invitationService.observeInvitations(userID: userID)
+            .receive(on: DispatchQueue.main)
+            .sink(receiveCompletion: { _ in },
+                  receiveValue: { [weak self] invites in
+                      self?.pendingInvitations = invites
+                  })
+            .store(in: &cancellables)
     }
+
+    func signOut() { authService.signOut() }
 }

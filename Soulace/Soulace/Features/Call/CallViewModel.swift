@@ -5,7 +5,6 @@
 //  Created by Ignasius Holy Prasetya on 02/05/26.
 //
 
-
 import Foundation
 import Combine
 import AVFoundation
@@ -56,9 +55,7 @@ final class CallViewModel: ObservableObject {
     private var participantJoinTimes: [String: Date] = [:]
     private var resolvedUsersByAgoraUID: [UInt: SoulaceUser] = [:]
 
-    // ✅ Fix race condition: track semua Task resolve yang sedang berjalan
-    // Saat leaveCall(), kita tunggu semua Task ini selesai dulu
-    // baru build summary
+    // Fix race condition: pastikan track semua Task resolve yang sedang berjalan
     private var resolveTasks: [UInt: Task<Void, Never>] = [:]
 
     var isHost: Bool         { session.hostID == currentUser.id }
@@ -67,6 +64,7 @@ final class CallViewModel: ObservableObject {
     var remainingFormatted: String { formatTime(max(0, durationSeconds - sessionElapsed)) }
     var participantCount: Int      { participants.count + 1 }
 
+    // Convert UID Firestore (String) -> UID Agora (Numeric)
     static func stableUID(from userID: String) -> UInt {
         var hash: UInt64 = 5381
         for byte in userID.utf8 { hash = ((hash << 5) &+ hash) &+ UInt64(byte) }
@@ -279,7 +277,7 @@ final class CallViewModel: ObservableObject {
                     id: session.id ?? "", status: .completed)
             }
 
-            // ✅ Fix race condition: tunggu semua Task resolve selesai dulu
+            // Fix race condition: tunggu semua Task resolve selesai dulu
             // Sebelum build summary, pastikan resolvedUsersByAgoraUID sudah penuh
             await waitForAllResolveTasks()
 
@@ -312,16 +310,14 @@ final class CallViewModel: ObservableObject {
         }
     }
 
-    // ✅ Tunggu semua Task resolve participant selesai
-    // Dengan timeout 3 detik agar tidak hang selamanya
-    // kalau ada Task yang memang tidak bisa resolve
+
     private func waitForAllResolveTasks() async {
         let tasks = await MainActor.run { Array(resolveTasks.values) }
         print("⏳ Waiting for \(tasks.count) resolve tasks...")
         await withTaskGroup(of: Void.self) { group in
             for task in tasks {
                 group.addTask {
-                    // Timeout 3 detik per task
+                    // Timeout 3 detik per task biar ga crash
                     await withTaskGroup(of: Void.self) { inner in
                         inner.addTask { await task.value }
                         inner.addTask {
@@ -385,7 +381,7 @@ final class CallViewModel: ObservableObject {
 
     // MARK: - Participant Name Resolution
     func resolveParticipantName(agoraUID: UInt) {
-        // ✅ Simpan Task ke dictionary agar bisa di-await saat leaveCall()
+        // Simpan Task ke dictionary agar bisa di-await saat leaveCall()
         let task = Task {
             if let user = await findUserByAgoraUID(agoraUID, retries: 3) {
                 await updateParticipantName(agoraUID: agoraUID, user: user)

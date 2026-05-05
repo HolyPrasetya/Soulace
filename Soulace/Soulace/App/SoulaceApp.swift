@@ -33,7 +33,7 @@ struct SoulaceApp: App {
         WindowGroup {
             RootView()
                 .environmentObject(appState)
-                // Handle Google Sign In deep link via SwiftUI
+                // Google Sign In pakai SwiftUI
                 .onOpenURL { url in
                     GIDSignIn.sharedInstance.handle(url)
                 }

@@ -124,13 +124,19 @@ final class FirestoreService {
         let ref = try db.collection(AppConstants.Collections.sessions).addDocument(from: session)
         let sessionID = ref.documentID
 
-        // Set channel name = sessionID (predictable, tidak UUID random)
-        try await ref.updateData(["agoraChannelName": sessionID])
+        var participantIDs = session.participantIDs
+        if !participantIDs.contains(session.hostID) {
+            participantIDs.append(session.hostID) // ✅ FIX
+        }
+
+        try await ref.updateData([
+            "agoraChannelName": sessionID,
+            "participantIDs": participantIDs
+        ])
 
         try await db.collection(AppConstants.Collections.groups).document(session.groupID)
             .updateData(["upcomingSessions": FieldValue.arrayUnion([sessionID])])
 
-        print("✅ Session created: \(sessionID) | channel: \(sessionID)")
         return sessionID
     }
 

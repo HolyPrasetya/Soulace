@@ -8,46 +8,70 @@
 import Foundation
 import Combine
 
-// MARK: - SessionSummaryViewModel
 final class SessionSummaryViewModel: ObservableObject {
-    @Published var participantDetails: [SoulaceUser] = []
-    @Published var isLoading: Bool = false
+
+    // MARK: - Published
+    @Published var participantMap: [String: SoulaceUser] = [:]
+    @Published var isResolvingNames: Bool = true
 
     let summary: SessionSummary
 
     private let firestoreService = FirestoreService.shared
-    private var cancellables     = Set<AnyCancellable>()
 
     init(summary: SessionSummary) {
         self.summary = summary
-        fetchParticipantDetails()
+        resolveParticipants()
     }
 
-    // MARK: - Fetch participant names from Firestore
-    private func fetchParticipantDetails() {
-        let ids = summary.session.participantIDs
-        guard !ids.isEmpty else { return }
-        isLoading = true
+    // MARK: - 🔥 FIX: Parallel + Stable Fetch
+    private func resolveParticipants() {
+        let ids = Array(summary.participantDurations.keys)
+
+        guard !ids.isEmpty else {
+            isResolvingNames = false
+            return
+        }
 
         Task {
-            var users: [SoulaceUser] = []
-            for id in ids {
-                if let user = try? await firestoreService.getUser(id: id) {
-                    users.append(user)
+            var result: [String: SoulaceUser] = [:]
+
+            await withTaskGroup(of: (String, SoulaceUser?).self) { group in
+                for id in ids {
+                    group.addTask {
+                        let user = try? await self.firestoreService.getUser(id: id)
+                        return (id, user)
+                    }
+                }
+
+                for await (id, user) in group {
+                    if let user {
+                        result[id] = user
+                    }
                 }
             }
+
             await MainActor.run {
-                self.participantDetails = users
-                self.isLoading = false
+                self.participantMap = result
+                self.isResolvingNames = false
             }
         }
     }
 
-    // MARK: - Computed helpers
-    var totalMinutes: Int       { summary.totalMinutes }
-    var participantCount: Int   { summary.session.participantIDs.count }
-    var groupName: String       { summary.session.groupName }
-    var durationMinutes: Int    { summary.session.durationMinutes }
+    // MARK: - Basic Info
+    var totalMinutes: Int { summary.totalMinutes }
+
+    // ✅ FIX: ambil dari durations (bukan participantIDs)
+    var participantCount: Int {
+        summary.participantDurations.count
+    }
+
+    var groupName: String {
+        summary.session.groupName
+    }
+
+    var durationMinutes: Int {
+        summary.session.durationMinutes
+    }
 
     var formattedDate: String {
         let f = DateFormatter()
@@ -67,25 +91,30 @@ final class SessionSummaryViewModel: ObservableObject {
         return quotes.randomElement() ?? quotes[0]
     }
 
-    // Longest participant name
+    // MARK: - 🧠 FIX: Longest Participant (CONSISTENT)
+    var longestParticipantID: String? {
+        summary.participantDurations.max(by: { $0.value < $1.value })?.key
+    }
+
     var longestParticipantName: String {
-        guard let longest = summary.longestParticipant else { return "—" }
-        return longest.fullName.components(separatedBy: " ").first ?? "—"
+        guard let id = longestParticipantID else { return "—" }
+
+        let name = participantMap[id]?.fullName ?? "Participant"
+        return name.components(separatedBy: " ").first ?? name
     }
 
     var longestParticipantMinutes: Int {
-        guard let longest = summary.longestParticipant,
-              let id      = longest.id else { return 0 }
+        guard let id = longestParticipantID else { return 0 }
         return summary.participantDurations[id] ?? 0
     }
 
-    // Sorted durations for bar chart
+    // MARK: - 📊 FIX: Sorted Durations (STABLE)
     var sortedDurations: [(name: String, minutes: Int)] {
         summary.participantDurations
-            .compactMap { userID, minutes -> (String, Int)? in
-                let name = participantDetails.first { $0.id == userID }?.fullName
-                    ?? "Participant"
-                return (name.components(separatedBy: " ").first ?? name, minutes)
+            .map { (userID, minutes) -> (String, Int) in
+                let name = participantMap[userID]?.fullName ?? "Participant"
+                let short = name.components(separatedBy: " ").first ?? name
+                return (short, minutes)
             }
             .sorted { $0.1 > $1.1 }
     }

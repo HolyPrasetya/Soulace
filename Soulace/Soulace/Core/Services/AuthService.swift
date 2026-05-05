@@ -44,13 +44,14 @@ final class AuthService: NSObject, ObservableObject {
     }
 
     // MARK: - Observe Firebase Auth State
+    // Core system saat login, logout, session restore
     private func observeFirebaseAuth() {
         authStateListener = Auth.auth().addStateDidChangeListener { [weak self] _, firebaseUser in
             guard let self else { return }
             if let firebaseUser {
-                Task { await self.fetchOrCreateUser(firebaseUser: firebaseUser) }
+                Task { await self.fetchOrCreateUser(firebaseUser: firebaseUser) }   //ada = login
             } else {
-                DispatchQueue.main.async { self.currentUser = nil }
+                DispatchQueue.main.async { self.currentUser = nil }                 //gada = logout
             }
         }
     }
@@ -104,7 +105,7 @@ final class AuthService: NSObject, ObservableObject {
 
     @MainActor
     func signInWithGoogle() async {
-        // Get root view controller
+        // Get root view controller -> Trigger Google popup -> Dapet idToken-> Convert ke Firebase credential
         guard let windowScene = UIApplication.shared.connectedScenes
                 .first as? UIWindowScene,
               let rootVC = windowScene.windows.first?.rootViewController else {
@@ -140,7 +141,7 @@ final class AuthService: NSObject, ObservableObject {
         } catch {
             DispatchQueue.main.async {
                 self.isLoading = false
-                // GIDSignIn cancelled by user — don't show error
+                // GIDSignIn cancelled by user != error
                 if (error as NSError).code != GIDSignInError.canceled.rawValue {
                     self.error = error.localizedDescription
                 }
@@ -172,13 +173,13 @@ final class AuthService: NSObject, ObservableObject {
                 return
             }
 
-            // ✅ isLoading = false SETELAH fetchOrCreateUser selesai
+            // Cek user udh ada/new
             Task {
                 await self.fetchOrCreateUser(
                     firebaseUser:     firebaseUser,
                     fullNameOverride: fullNameOverride
                 )
-                DispatchQueue.main.async { self.isLoading = false }
+                DispatchQueue.main.async { self.isLoading = false } // biar ga tabrakan
             }
         }
     }
@@ -188,7 +189,7 @@ final class AuthService: NSObject, ObservableObject {
                                    fullNameOverride: String? = nil) async {
         do {
             if let existing = try await FirestoreService.shared.getUser(id: firebaseUser.uid) {
-                DispatchQueue.main.async { self.currentUser = existing }
+                DispatchQueue.main.async { self.currentUser = existing }  // Cek user udh ada/new
             } else {
                 let newUser = SoulaceUser(
                     id:                    firebaseUser.uid,
