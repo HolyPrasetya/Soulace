@@ -317,15 +317,20 @@ struct InviteMemberView: View {
 
                 VStack(spacing: 0) {
                     // Search bar
-                    HStack(spacing: 10) {
-                        Image(systemName: "magnifyingglass")
-                            .foregroundColor(Color.soulaceDark.opacity(0.4))
-                        TextField("Search by name...", text: $vm.searchQuery)
+                    ZStack(alignment: .leading) {
+                        if vm.searchQuery.isEmpty {
+                            Text("Search by name...")
+                                .foregroundColor(Color.gray.opacity(0.5)) // abu samar
+                                .font(.system(size: 15))
+                        }
+
+                        TextField("", text: $vm.searchQuery)
                             .font(.system(size: 15))
                             .foregroundColor(Color.soulaceDark)
                             .onChange(of: vm.searchQuery) { _ in
                                 Task { await vm.searchUsers() }
                             }
+                        
                         if !vm.searchQuery.isEmpty {
                             Button(action: { vm.searchQuery = "" }) {
                                 Image(systemName: "xmark.circle.fill")
@@ -388,13 +393,26 @@ struct InviteMemberView: View {
                     }
                 }
             }
-            .navigationTitle("Invite to \(group.name)")
-            .navigationBarTitleDisplayMode(.inline)
+//            .navigationTitle("Invite to \(group.name)")
+//            .navigationBarTitleDisplayMode(.inline)
+//            .toolbar {
+//                ToolbarItem(placement: .navigationBarTrailing) {
+//                    Button("Done") { dismiss() }.foregroundColor(Color.soulaceAccent)
+//                }
+//            }
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text("Invite to \(group.name)")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundColor(Color(hex: "2F453B"))
+                }
+
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") { dismiss() }.foregroundColor(Color.soulaceAccent)
+                    Button("Done") { dismiss() }
+                        .foregroundColor(Color.soulaceAccent)
                 }
             }
+            .navigationBarTitleDisplayMode(.inline)
         }
     }
 }

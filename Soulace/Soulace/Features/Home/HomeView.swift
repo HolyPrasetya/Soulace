@@ -101,62 +101,75 @@ struct HomeView: View {
 
     // MARK: - Header
     private var headerSection: some View {
-        HStack(alignment: .center) {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 8) {
-                    Image("SecondarySoulace")
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: 30, height: 30)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
+        HStack(alignment: .center, spacing: 12) {
 
-                    Text("Soulace")
-                        .font(.custom("Georgia", size: 20))
-                        .fontWeight(.semibold)
-                        .foregroundColor(Color.soulaceDark)
-                }
-
-                Text("\(vm.greetingText), \(vm.currentUser?.fullName.components(separatedBy: " ").first ?? "friend") 👋")
-                    .font(.system(size: 13))
-                    .foregroundColor(Color.soulaceDark.opacity(0.55))
-                    .padding(.top, 2)
-            }
-
-            Spacer()
-
-            HStack(spacing: 10) {
-                // Bell — invitations badge
-                Button(action: { vm.showInvitations = true }) {
-                    ZStack(alignment: .topTrailing) {
-                        Image(systemName: "bell.fill")
-                            .font(.system(size: 18))
-                            .foregroundColor(Color.soulaceDark.opacity(0.6))
-                            .frame(width: 38, height: 38)
-                        if !vm.pendingInvitations.isEmpty {
-                            ZStack {
-                                Circle().fill(Color.red).frame(width: 16, height: 16)
-                                Text("\(vm.pendingInvitations.count)")
-                                    .font(.system(size: 9, weight: .bold))
-                                    .foregroundColor(.white)
-                            }
-                            .offset(x: 2, y: -2)
-                        }
-                    }
-                }
-
-                // Avatar / profile
-                Button(action: { showLogoutConfirm = true }) {
+            // ── Kiri: Avatar + nama ──
+            Button(action: { showLogoutConfirm = true }) {
+                HStack(spacing: 10) {
                     ZStack {
                         Circle()
-                            .fill(Color.white.opacity(0.6))
+                            .fill(Color.white.opacity(0.7))
                             .frame(width: 42, height: 42)
                         Text(vm.currentUser?.initials ?? "?")
                             .font(.system(size: 15, weight: .bold))
                             .foregroundColor(Color.soulaceAccent)
                     }
-                    .overlay(Circle().stroke(Color.white.opacity(0.8), lineWidth: 1.5))
+                    .overlay(Circle().stroke(Color.white.opacity(0.9), lineWidth: 1.5))
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(vm.currentUser?.fullName.components(separatedBy: " ").first ?? "Friend")
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundColor(Color.soulaceDark)
+                        Text(vm.greetingText)
+                            .font(.system(size: 11))
+                            .foregroundColor(Color.soulaceDark.opacity(0.5))
+                    }
                 }
             }
+            .buttonStyle(SoulaceScaleButtonStyle())
+
+            Spacer()
+
+//            // ── Tengah: Logo Soulace ──
+//            HStack(spacing: 6) {
+//                Image("SecondarySoulace")
+//                    .resizable()
+//                    .scaledToFit()
+//                    .frame(width: 26, height: 26)
+//                    .clipShape(RoundedRectangle(cornerRadius: 7))
+//                Text("Soulace")
+//                    .font(.custom("Georgia", size: 17))
+//                    .fontWeight(.semibold)
+//                    .foregroundColor(Color.soulaceDark)
+//            }
+//
+//            Spacer()
+
+            // ── Kanan: Bell invitation ──
+            Button(action: { vm.showInvitations = true }) {
+                ZStack(alignment: .topTrailing) {
+                    ZStack {
+                        Circle()
+                            .fill(Color.white.opacity(0.7))
+                            .frame(width: 42, height: 42)
+                        Image(systemName: "bell.fill")
+                            .font(.system(size: 16))
+                            .foregroundColor(Color.soulaceDark.opacity(0.65))
+                    }
+                    .overlay(Circle().stroke(Color.white.opacity(0.9), lineWidth: 1.5))
+
+                    if !vm.pendingInvitations.isEmpty {
+                        ZStack {
+                            Circle().fill(Color.red).frame(width: 17, height: 17)
+                            Text("\(vm.pendingInvitations.count)")
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundColor(.white)
+                        }
+                        .offset(x: 3, y: -3)
+                    }
+                }
+            }
+            .buttonStyle(SoulaceScaleButtonStyle())
         }
     }
 

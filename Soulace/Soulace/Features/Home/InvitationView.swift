@@ -5,11 +5,12 @@
 //  Created by Ignasius Holy Prasetya on 06/05/26.
 //
 
+
 import SwiftUI
 import Combine
+import FirebaseCore
 
 // MARK: - InvitationsView
-// Sheet yang muncul dari HomeView saat ada pending invitations
 struct InvitationsView: View {
     @StateObject private var vm: InvitationsViewModel
     @Environment(\.dismiss) private var dismiss
@@ -24,33 +25,40 @@ struct InvitationsView: View {
                 Color(hex: "F5F8F6").ignoresSafeArea()
 
                 if vm.invitations.isEmpty {
-                    VStack(spacing: 12) {
+                    VStack(spacing: 14) {
                         Image(systemName: "envelope.open")
-                            .font(.system(size: 40))
-                            .foregroundColor(Color.soulaceAccent.opacity(0.3))
+                            .font(.system(size: 44))
+                            .foregroundColor(Color.soulaceAccent.opacity(0.25))
                         Text("No pending invitations")
                             .font(.system(size: 15))
                             .foregroundColor(Color.soulaceDark.opacity(0.4))
                     }
                 } else {
                     ScrollView(showsIndicators: false) {
-                        VStack(spacing: 12) {
+                        VStack(spacing: 14) {
                             ForEach(vm.invitations) { invite in
                                 InvitationCard(
-                                    invite:   invite,
+                                    invite:    invite,
                                     isLoading: vm.loadingID == invite.id,
-                                    onAccept: { vm.accept(invite) },
+                                    onAccept:  { vm.accept(invite) },
                                     onDecline: { vm.decline(invite) }
                                 )
                             }
                         }
-                        .padding(20)
+                        .padding(.horizontal, 20)
+                        .padding(.top, 16)
+                        .padding(.bottom, 40)
                     }
                 }
             }
-            .navigationTitle("Invitations")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text("Accept Invitations\(vm.invitations.isEmpty ? "" : " (\(vm.invitations.count))")")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundColor(Color(hex: "2F453B"))
+                }
+
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Done") { dismiss() }
                         .foregroundColor(Color.soulaceAccent)
@@ -68,77 +76,79 @@ struct InvitationCard: View {
     let onDecline: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 12) {
-                ZStack {
-                    Circle()
-                        .fill(LinearGradient(
-                            colors: [Color.soulaceMint, Color.soulaceSage],
-                            startPoint: .topLeading, endPoint: .bottomTrailing))
-                        .frame(width: 46, height: 46)
-                    Image(systemName: "person.3.fill")
-                        .font(.system(size: 18))
-                        .foregroundColor(Color.soulaceAccent)
-                }
+        VStack(alignment: .leading, spacing: 16) {
 
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(invite.groupName)
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundColor(Color.soulaceDark)
-                    Text("Invited by \(invite.fromName.components(separatedBy: " ").first ?? invite.fromName)")
-                        .font(.system(size: 13))
-                        .foregroundColor(Color.soulaceDark.opacity(0.5))
-                }
+            // ── Top: invited by + from name ──
+            HStack(spacing: 8) {
+                Text(invite.createdAt.dateValue().shortDateString)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(Color.soulaceDark.opacity(0.5))
+                    .padding(.horizontal, 10).padding(.vertical, 5)
+                    .background(Capsule().fill(Color.soulaceDark.opacity(0.07)))
+
+                Text("Invited by \(invite.fromName.components(separatedBy: " ").first ?? invite.fromName)")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(Color.soulaceDark.opacity(0.5))
+                    .padding(.horizontal, 10).padding(.vertical, 5)
+                    .background(Capsule().fill(Color.soulaceDark.opacity(0.07)))
 
                 Spacer()
             }
 
+            // ── Group name ──
+            Text(invite.groupName)
+                .font(.system(size: 22, weight: .bold))
+                .foregroundColor(Color.soulaceDark)
+
+            // ── Starting in ──
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Group invitation")
+                    .font(.system(size: 12))
+                    .foregroundColor(Color.soulaceDark.opacity(0.4))
+                Text("Join \(invite.groupName) to practice together")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(Color.soulaceAccent)
+            }
+
+            // ── Buttons ──
             if isLoading {
-                HStack {
-                    Spacer()
-                    ProgressView().tint(Color.soulaceAccent)
-                    Spacer()
-                }
-                .padding(.vertical, 4)
+                HStack { Spacer(); ProgressView().tint(Color.soulaceAccent); Spacer() }
+                    .padding(.vertical, 4)
             } else {
                 HStack(spacing: 10) {
-                    // Decline
                     Button(action: onDecline) {
-                        Text("Decline")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundColor(Color.soulaceDark.opacity(0.6))
+                        Text("Reject")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundColor(.white)
                             .frame(maxWidth: .infinity)
-                            .padding(.vertical, 12)
+                            .padding(.vertical, 13)
                             .background(
                                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .fill(Color.soulaceDark.opacity(0.07))
+                                    .fill(Color(hex: "E05C5C"))
                             )
                     }
                     .buttonStyle(SoulaceScaleButtonStyle())
 
-                    // Accept
                     Button(action: onAccept) {
                         Text("Accept")
-                            .font(.system(size: 14, weight: .semibold))
+                            .font(.system(size: 14, weight: .bold))
                             .foregroundColor(.white)
                             .frame(maxWidth: .infinity)
-                            .padding(.vertical, 12)
+                            .padding(.vertical, 13)
                             .background(
                                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                                     .fill(Color.soulaceAccent)
-                                    .shadow(color: Color.soulaceAccent.opacity(0.3),
-                                            radius: 6, x: 0, y: 3)
                             )
                     }
                     .buttonStyle(SoulaceScaleButtonStyle())
                 }
             }
         }
-        .padding(16)
+        .padding(18)
         .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .fill(Color.white)
-                .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: 3)
+                .shadow(color: Color.black.opacity(0.06), radius: 10, x: 0, y: 4)
         )
     }
 }
@@ -146,7 +156,7 @@ struct InvitationCard: View {
 // MARK: - InvitationsViewModel
 final class InvitationsViewModel: ObservableObject {
     @Published var invitations: [GroupInvitation] = []
-    @Published var loadingID: String?             = nil
+    @Published var loadingID:   String?           = nil
 
     private let service      = GroupInvitationService.shared
     private var cancellables = Set<AnyCancellable>()
