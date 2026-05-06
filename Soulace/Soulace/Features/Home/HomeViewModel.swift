@@ -15,7 +15,6 @@ final class HomeViewModel: ObservableObject {
     @Published var errorMessage: String?            = nil
     @Published var showCreateGroup: Bool            = false
     @Published var showJoinSession: Bool            = false
-    // ✅ Invitations
     @Published var pendingInvitations: [GroupInvitation] = []
     @Published var showInvitations: Bool            = false
 
@@ -81,7 +80,7 @@ final class HomeViewModel: ObservableObject {
         }
     }
 
-    // ✅ Listen pending invitations realtime
+    // Listen pending invitations realtime
     private func observeInvitations() {
         guard let userID = authService.currentUser?.id else { return }
         invitationService.observeInvitations(userID: userID)

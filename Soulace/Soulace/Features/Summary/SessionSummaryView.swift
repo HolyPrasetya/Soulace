@@ -111,7 +111,7 @@ struct SessionSummaryView: View {
     }
 
     // MARK: - Time Together
-    // ✅ Bug 3: durasi individual beda-beda + warna gradasi hijau makin terang = makin lama
+    // Durasi summary individual beda-beda + warna gradasi hijau makin terang = makin lama
     private var timeTogether: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Time Together")
@@ -137,7 +137,7 @@ struct SessionSummaryView: View {
                                 RoundedRectangle(cornerRadius: 5)
                                     .fill(Color.white.opacity(0.08))
 
-                                // ✅ Warna gradasi: makin lama = lebih hijau terang
+                                // Gradasi
                                 // ratio = persentase dari max duration (0.0 - 1.0)
                                 let ratio  = maxMinutes > 0 ? Double(item.minutes) / Double(maxMinutes) : 0
                                 let startC = durationColor(ratio: ratio, brighten: false)
@@ -186,7 +186,6 @@ struct SessionSummaryView: View {
         .opacity(appeared ? 1 : 0)
     }
 
-    // ✅ Warna bar: ratio rendah = hijau gelap, ratio tinggi = mint terang
     private func durationColor(ratio: Double, brighten: Bool) -> Color {
         let r = max(0, min(1, ratio))
         // Dari hijau gelap (0,0.22,0.15) ke mint terang (0.82,0.89,0.89)

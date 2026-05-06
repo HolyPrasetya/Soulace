@@ -30,7 +30,6 @@ final class FirestoreService {
 
     func createUser(_ user: SoulaceUser) async throws {
         guard let id = user.id else { throw FirestoreError.missingID }
-        // ✅ setData tanpa await = fire-and-forget, bisa gagal diam-diam
         // Pakai Encoder manual supaya bisa await
         let encoded = try Firestore.Encoder().encode(user)
         try await db.collection(AppConstants.Collections.users).document(id).setData(encoded)
@@ -119,14 +118,13 @@ final class FirestoreService {
 
     // MARK: ── SESSIONS ──
 
-    // ✅ Fix: agoraChannelName = sessionID setelah create
     func createSession(_ session: YogaSession) async throws -> String {
         let ref = try db.collection(AppConstants.Collections.sessions).addDocument(from: session)
         let sessionID = ref.documentID
 
         var participantIDs = session.participantIDs
         if !participantIDs.contains(session.hostID) {
-            participantIDs.append(session.hostID) // ✅ FIX
+            participantIDs.append(session.hostID) //
         }
 
         try await ref.updateData([
@@ -168,7 +166,7 @@ final class FirestoreService {
         return subject.eraseToAnyPublisher()
     }
 
-    // ✅ Realtime observer — untuk video sync & elapsed sync
+    // Realtime observer — untuk video sync & elapsed sync
     func observeSession(id: String) -> AnyPublisher<YogaSession?, Error> {
         let subject = PassthroughSubject<YogaSession?, Error>()
         db.collection(AppConstants.Collections.sessions).document(id)
@@ -189,13 +187,13 @@ final class FirestoreService {
             .updateData(["participantIDs": FieldValue.arrayUnion([userID])])
     }
 
-    // ✅ Sync elapsed timer ke Firestore — persistent across rejoin
+    // Sync elapsed timer ke Firestore — persistent across rejoin
     func updateSessionElapsed(sessionID: String, elapsed: Int) async throws {
         try await db.collection(AppConstants.Collections.sessions).document(sessionID)
             .updateData(["elapsedSeconds": elapsed])
     }
 
-    // ✅ Video sync — update state video untuk semua participant
+    // Video sync — update state video untuk semua participant
     func updateVideoSync(sessionID: String, sync: VideoSyncState) async throws {
         let data: [String: Any] = [
             "videoSync": [

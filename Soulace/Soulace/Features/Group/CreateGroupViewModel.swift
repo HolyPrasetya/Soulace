@@ -102,8 +102,6 @@ final class CreateGroupViewModel: ObservableObject {
     }
 
     // MARK: - Create Group
-    // ✅ FIX: Creator sendiri yang jadi satu-satunya member awal.
-    // Selected members TIDAK langsung ditambah — mereka dikirimi invitation.
     @MainActor
     func createGroup() async {
         guard let currentUser = authService.currentUser,
@@ -138,7 +136,7 @@ final class CreateGroupViewModel: ObservableObject {
                 inviteCode:  group.inviteCode
             )
 
-            // ✅ Kirim invitation ke semua selected members (bukan addUserToGroup langsung)
+            // Kirim invitation ke semua selected members
             for member in selectedMembers {
                 guard let toID = member.id else { continue }
                 try? await invitationService.sendInvitation(

@@ -60,7 +60,6 @@ final class SessionSummaryViewModel: ObservableObject {
     // MARK: - Basic Info
     var totalMinutes: Int { summary.totalMinutes }
 
-    // ✅ FIX: ambil dari durations (bukan participantIDs)
     var participantCount: Int {
         summary.participantDurations.count
     }
