@@ -2,6 +2,15 @@ import SwiftUI
 import Combine
 
 
+//SOLID
+//modularity -> dependency injection -> SDK
+//circular dependency
+//
+//snake_case
+//asda-case
+//camel  -> var, method/func, params -> non object
+//pascal -> struct class protocol enum  -> object
+
 // MARK: - App Screen Enum
 enum AppScreen {
     case splash
@@ -70,3 +79,23 @@ struct RootView: View {
         .animation(.easeInOut(duration: 0.45), value: appState.isAuthenticated)
     }
 }
+
+
+//MVC -> MVVM -> VIPER
+//
+//traditional model view viewmodel
+//
+//view -> view
+//interactor <- viewmodel
+//presenter <- viewmodel
+//entity -> model
+//router <- viewmodel
+//UIKit
+//
+//SwiftUI -> VIPER -> Reactive MVVM -> TCA -> domain driven archic ->
+//reactive & declarative
+//
+//
+//Reactive MVVM+ coordinator
+//+ chain
+//+

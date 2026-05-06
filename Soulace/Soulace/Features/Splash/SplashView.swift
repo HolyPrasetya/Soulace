@@ -103,7 +103,7 @@ struct SplashView: View {
     private func runAnimations() {
         // Ring pulse
         withAnimation(.easeOut(duration: 0.9).delay(0.1)) {
-            ringScale   = 1.2
+            ringScale   = 2.0
             ringOpacity = 0.9
         }
         withAnimation(.easeIn(duration: 0.4).delay(0.9)) {

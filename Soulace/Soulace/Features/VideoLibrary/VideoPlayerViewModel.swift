@@ -66,11 +66,8 @@ final class VideoPlayerViewModel: ObservableObject {
     // MARK: - Controls
     func togglePlayPause() {
         guard let player else { return }
-        if isPlaying {
-            player.pause()
-        } else {
-            player.play()
-        }
+        
+        isPlaying ? player.pause() : player.play()
         isPlaying.toggle()
     }
 

@@ -103,7 +103,7 @@ struct HomeView: View {
     private var headerSection: some View {
         HStack(alignment: .center, spacing: 12) {
 
-            // ── Kiri: Avatar + nama ──
+            // Kiri: Avatar + nama
             Button(action: { showLogoutConfirm = true }) {
                 HStack(spacing: 10) {
                     ZStack {
@@ -270,8 +270,9 @@ struct HomeView: View {
             } else {
                 VStack(spacing: 12) {
                     ForEach(vm.groups) { group in
-                        NavigationLink(destination: GroupDetailView(group: group)) {
-                            GroupRowCard(group: group,
+//                        NavigationLink(destination: GroupDetailView(group: group)) {
+                        NavigationLink(destination: GroupDetailView(group: group, currentUserID: appState.currentUser?.id)) {
+                        GroupRowCard(group: group,
                                         session: vm.upcomingSessions.first { $0.groupID == group.id })
                         }
                         .buttonStyle(SoulaceScaleButtonStyle())

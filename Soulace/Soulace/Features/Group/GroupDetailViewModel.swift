@@ -28,11 +28,20 @@ final class GroupDetailViewModel: ObservableObject {
     private let authService      = AuthService.shared
     private var cancellables     = Set<AnyCancellable>()
 
-    var currentUserID: String? { authService.currentUser?.id }
+//    var currentUserID: String? { authService.currentUser?.id }
+//    var isCreator: Bool { group.creatorID == currentUserID }
+//
+//    init(group: YogaGroup) {
+//        self.group = group
+//        fetchSessions()
+//    }
+    
+    private let currentUserID: String?
     var isCreator: Bool { group.creatorID == currentUserID }
 
-    init(group: YogaGroup) {
+    init(group: YogaGroup, currentUserID: String?) {
         self.group = group
+        self.currentUserID = currentUserID
         fetchSessions()
     }
 

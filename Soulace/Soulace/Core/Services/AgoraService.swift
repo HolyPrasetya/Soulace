@@ -31,7 +31,7 @@ final class AgoraService: NSObject, ObservableObject {
 
     override init() { super.init() }
 
-    // MARK: - Setup Engine (lazy)
+    // MARK: - Setup Engine
     private func setupEngineIfNeeded() {
         guard agoraKit == nil else { return }
         let config            = AgoraRtcEngineConfig()
@@ -42,7 +42,7 @@ final class AgoraService: NSObject, ObservableObject {
         agoraKit?.enableVideo()
         agoraKit?.enableAudio()
 
-        // ── Fix: set video encoding config for better quality ──
+        // Video quality config
         let videoConfig = AgoraVideoEncoderConfiguration(
             size:        CGSize(width: 640, height: 480),
             frameRate:   15,
@@ -69,7 +69,7 @@ final class AgoraService: NSObject, ObservableObject {
         options.autoSubscribeVideo         = true
 
         let result = agoraKit?.joinChannel(
-            byToken:      nil,        // nil = App ID only mode (no token)
+            byToken:      nil,
             channelId:    channelName,
             uid:          userID,
             mediaOptions: options

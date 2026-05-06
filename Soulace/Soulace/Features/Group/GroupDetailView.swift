@@ -14,8 +14,12 @@ struct GroupDetailView: View {
     @EnvironmentObject var appState: AppState
     @Environment(\.dismiss) private var dismiss
 
-    init(group: YogaGroup) {
-        _vm = StateObject(wrappedValue: GroupDetailViewModel(group: group))
+//    init(group: YogaGroup) {
+//        _vm = StateObject(wrappedValue: GroupDetailViewModel(group: group))
+//    }
+    
+    init(group: YogaGroup, currentUserID: String?) {
+        _vm = StateObject(wrappedValue: GroupDetailViewModel(group: group, currentUserID: currentUserID))
     }
 
     var body: some View {
