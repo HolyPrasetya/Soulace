@@ -5,12 +5,10 @@
 //  Created by Ignasius Holy Prasetya on 06/05/26.
 //
 
-
 import SwiftUI
 import Combine
-import FirebaseCore
 
-// MARK: - InvitationsView
+// MARK: - Invitations View
 struct InvitationsView: View {
     @StateObject private var vm: InvitationsViewModel
     @Environment(\.dismiss) private var dismiss
@@ -23,40 +21,46 @@ struct InvitationsView: View {
         NavigationStack {
             ZStack {
                 Color(hex: "F5F8F6").ignoresSafeArea()
-
+                
                 if vm.invitations.isEmpty {
-                    VStack(spacing: 14) {
+                    VStack(spacing: 12) {
                         Image(systemName: "envelope.open")
-                            .font(.system(size: 44))
-                            .foregroundColor(Color.soulaceAccent.opacity(0.25))
-                        Text("No pending invitations")
-                            .font(.system(size: 15))
-                            .foregroundColor(Color.soulaceDark.opacity(0.4))
+                            .font(.system(size: 40))
+                            .foregroundColor(.gray.opacity(0.3))
+                        Text("No invitations")
+                            .foregroundColor(.gray.opacity(0.6))
                     }
                 } else {
                     ScrollView(showsIndicators: false) {
-                        VStack(spacing: 14) {
+                        VStack(spacing: 16) {
                             ForEach(vm.invitations) { invite in
                                 InvitationCard(
-                                    invite:    invite,
-                                    isLoading: vm.loadingID == invite.id,
-                                    onAccept:  { vm.accept(invite) },
+                                    invite: invite,
+                                    isExpanded: vm.expandedID == invite.id,
+                                    loadingID: vm.loadingID,
+                                    onToggle: { vm.toggle(invite) },
+                                    onAccept: { vm.accept(invite) },
                                     onDecline: { vm.decline(invite) }
                                 )
                             }
                         }
-                        .padding(.horizontal, 20)
-                        .padding(.top, 16)
-                        .padding(.bottom, 40)
+                        .padding(20)
                     }
                 }
             }
             .navigationBarTitleDisplayMode(.inline)
+
+            // ✅ CUSTOM TITLE (warna beda)
             .toolbar {
                 ToolbarItem(placement: .principal) {
-                    Text("Accept Invitations\(vm.invitations.isEmpty ? "" : " (\(vm.invitations.count))")")
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundColor(Color(hex: "2F453B"))
+                    HStack(spacing: 4) {
+                        Text("Accept Invitations")
+                            .foregroundColor(.black)
+
+                        Text("(\(vm.invitations.count))")
+                            .foregroundColor(Color(hex: "2F453B"))
+                    }
+                    .font(.system(size: 17, weight: .semibold))
                 }
 
                 ToolbarItem(placement: .navigationBarTrailing) {
@@ -64,101 +68,171 @@ struct InvitationsView: View {
                         .foregroundColor(Color.soulaceAccent)
                 }
             }
+
+            // navbar styling biar clean putih
+            .toolbarBackground(.visible, for: .navigationBar)
+            .toolbarBackground(Color.white, for: .navigationBar)
+            .toolbarColorScheme(.light, for: .navigationBar)
         }
     }
 }
 
-// MARK: - InvitationCard
+// MARK: - Invitation Card
 struct InvitationCard: View {
-    let invite:    GroupInvitation
-    let isLoading: Bool
-    let onAccept:  () -> Void
+    let invite: GroupInvitation
+    let isExpanded: Bool
+    let loadingID: String?
+
+    let onToggle: () -> Void
+    let onAccept: () -> Void
     let onDecline: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(spacing: 12) {
 
-            // ── Top: invited by + from name ──
-            HStack(spacing: 8) {
-                Text(invite.createdAt.dateValue().shortDateString)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(Color.soulaceDark.opacity(0.5))
-                    .padding(.horizontal, 10).padding(.vertical, 5)
-                    .background(Capsule().fill(Color.soulaceDark.opacity(0.07)))
+            // HEADER
+            Button(action: onToggle) {
+                HStack {
+                    Text(invite.groupName)
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundColor(.black)
 
-                Text("Invited by \(invite.fromName.components(separatedBy: " ").first ?? invite.fromName)")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(Color.soulaceDark.opacity(0.5))
-                    .padding(.horizontal, 10).padding(.vertical, 5)
-                    .background(Capsule().fill(Color.soulaceDark.opacity(0.07)))
+                    Spacer()
 
-                Spacer()
-            }
-
-            // ── Group name ──
-            Text(invite.groupName)
-                .font(.system(size: 22, weight: .bold))
-                .foregroundColor(Color.soulaceDark)
-
-            // ── Starting in ──
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Group invitation")
-                    .font(.system(size: 12))
-                    .foregroundColor(Color.soulaceDark.opacity(0.4))
-                Text("Join \(invite.groupName) to practice together")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(Color.soulaceAccent)
-            }
-
-            // ── Buttons ──
-            if isLoading {
-                HStack { Spacer(); ProgressView().tint(Color.soulaceAccent); Spacer() }
-                    .padding(.vertical, 4)
-            } else {
-                HStack(spacing: 10) {
-                    Button(action: onDecline) {
-                        Text("Reject")
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundColor(.white)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 13)
-                            .background(
-                                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .fill(Color(hex: "E05C5C"))
-                            )
-                    }
-                    .buttonStyle(SoulaceScaleButtonStyle())
-
-                    Button(action: onAccept) {
-                        Text("Accept")
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundColor(.white)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 13)
-                            .background(
-                                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .fill(Color.soulaceAccent)
-                            )
-                    }
-                    .buttonStyle(SoulaceScaleButtonStyle())
+                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                        .foregroundColor(.gray)
                 }
             }
+
+            // DIVIDER
+            Rectangle()
+                .fill(Color.black.opacity(0.06))
+                .frame(height: 1)
+
+            // CONTENT
+            if isExpanded {
+                expandedContent
+            } else {
+                collapsedContent
+            }
         }
-        .padding(18)
+        .padding(16)
         .background(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
+            RoundedRectangle(cornerRadius: 18)
                 .fill(Color.white)
-                .shadow(color: Color.black.opacity(0.06), radius: 10, x: 0, y: 4)
+                .shadow(color: .black.opacity(0.05), radius: 6, x: 0, y: 3)
         )
+    }
+
+    // MARK: - Collapsed
+    private var collapsedContent: some View {
+        HStack {
+            Text("Members")
+                .font(.system(size: 13))
+                .foregroundColor(.gray)
+
+            Spacer()
+
+            avatarStack
+
+            Spacer()
+
+            actionButtons
+        }
+    }
+
+    // MARK: - Expanded
+    private var expandedContent: some View {
+        VStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Members")
+                    .font(.system(size: 13))
+                    .foregroundColor(.gray)
+
+                memberRow(name: invite.fromName)
+            }
+
+            actionButtons
+        }
+    }
+
+    // MARK: - Avatar
+    private var avatarStack: some View {
+        HStack(spacing: -10) {
+            Circle()
+                .fill(Color.soulaceAccent.opacity(0.15))
+                .frame(width: 28, height: 28)
+                .overlay(
+                    Text(initials(from: invite.fromName))
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(Color.soulaceAccent)
+                )
+        }
+    }
+
+    // MARK: - Member Row
+    private func memberRow(name: String) -> some View {
+        HStack(spacing: 10) {
+            Circle()
+                .fill(Color.soulaceAccent.opacity(0.15))
+                .frame(width: 34, height: 34)
+                .overlay(
+                    Text(initials(from: name))
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(Color.soulaceAccent)
+                )
+
+            Text(name)
+                .font(.system(size: 14))
+                .foregroundColor(.black)
+
+            Spacer()
+        }
+    }
+
+    // MARK: - Buttons
+    private var actionButtons: some View {
+        HStack(spacing: 10) {
+            Button(action: onDecline) {
+                Text("Reject")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(Color.red)
+                    .clipShape(Capsule())
+            }
+
+            Button(action: onAccept) {
+                Text("Accept")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(Color(hex: "2F453B"))
+                    .clipShape(Capsule())
+            }
+        }
+    }
+
+    // MARK: - Helpers
+    private func initials(from name: String) -> String {
+        name
+            .components(separatedBy: " ")
+            .compactMap { $0.first }
+            .prefix(2)
+            .map { String($0) }
+            .joined()
     }
 }
 
-// MARK: - InvitationsViewModel
+// MARK: - ViewModel
 final class InvitationsViewModel: ObservableObject {
     @Published var invitations: [GroupInvitation] = []
-    @Published var loadingID:   String?           = nil
+    @Published var expandedID: String? = nil
+    @Published var loadingID: String? = nil
 
-    private let service      = GroupInvitationService.shared
+    private let service = GroupInvitationService.shared
     private var cancellables = Set<AnyCancellable>()
 
     init(userID: String) {
@@ -167,6 +241,14 @@ final class InvitationsViewModel: ObservableObject {
             .sink(receiveCompletion: { _ in },
                   receiveValue: { [weak self] in self?.invitations = $0 })
             .store(in: &cancellables)
+    }
+
+    func toggle(_ invite: GroupInvitation) {
+        if expandedID == invite.id {
+            expandedID = nil
+        } else {
+            expandedID = invite.id
+        }
     }
 
     func accept(_ invite: GroupInvitation) {
